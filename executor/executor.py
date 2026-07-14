@@ -136,13 +136,35 @@ def init_client(testnet: bool, logger: logging.Logger):
         )
 
     client = Client(api_key, api_secret, testnet=testnet)
-    # Sanity ping.
+    # Sanity ping (public endpoint — proves connectivity, NOT auth).
     try:
         client.futures_ping()
     except Exception as e:
         logger.error("Binance futures ping failed (testnet=%s): %s", testnet, e)
         raise
-    logger.info("Binance Futures client ready (testnet=%s)", testnet)
+    # Preflight AUTH check (read-only). futures_ping is public, so a bad key
+    # only surfaces at order time with a cryptic -2015. Fail fast here with a
+    # clear message instead.
+    try:
+        client.futures_account()
+    except Exception as e:
+        logger.error(
+            "Binance futures AUTH check FAILED (testnet=%s): %s", testnet, e
+        )
+        logger.error(
+            "Key/secret rejected. Common causes: "
+            "(1) key generated on the SPOT testnet (testnet.binance.vision) "
+            "instead of the FUTURES testnet (testnet.binancefuture.com) — they "
+            "are separate systems; (2) key lacks Futures permission; "
+            "(3) IP restriction on the key. Regenerate at "
+            "https://testnet.binancefuture.com and re-paste into executor/.env."
+        )
+        raise
+    logger.info(
+        "Binance Futures client ready + auth OK (testnet=%s, url=%s)",
+        testnet,
+        client._create_futures_api_uri(""),
+    )
     return client
 
 
