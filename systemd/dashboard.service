@@ -1,0 +1,24 @@
+[Unit]
+Description=Trading Bot — Dashboard (read-only, localhost only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# >>> EDIT: point to your repo path, user, and python <<<
+User=tradingbot
+WorkingDirectory=/opt/trading-bot
+EnvironmentFile=/opt/trading-bot/dashboard/.env
+# 127.0.0.1 ONLY — access via SSH tunnel: ssh -L 8080:127.0.0.1:8080 user@vps
+ExecStart=/opt/trading-bot/.venv/bin/uvicorn dashboard.app:app \
+    --host 127.0.0.1 --port 8080
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/trading-bot
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

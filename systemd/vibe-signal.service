@@ -1,0 +1,12 @@
+[Unit]
+Description=Trading Bot — Vibe-Trading signal generator (one-shot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# >>> EDIT: point to your repo path and user <<<
+User=tradingbot
+WorkingDirectory=/opt/trading-bot
+ExecStart=/opt/trading-bot/vibe-trading/generate_signal.sh
+# vibe-trading/.env (ZAI keys) loaded by the script itself

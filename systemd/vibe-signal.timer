@@ -1,0 +1,11 @@
+[Unit]
+Description=Trading Bot — run signal generator on a schedule
+Requires=vibe-signal.service
+
+[Timer]
+# Every 5 minutes. Adjust to taste.
+OnCalendar=*:0/5
+Persistent=true
+
+[Install]
+WantedBy=timers.target

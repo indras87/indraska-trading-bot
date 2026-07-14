@@ -1,0 +1,23 @@
+[Unit]
+Description=Trading Bot — Binance Futures Executor (testnet)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# >>> EDIT: point to your repo path, user, and python <<<
+User=tradingbot
+WorkingDirectory=/opt/trading-bot
+EnvironmentFile=/opt/trading-bot/executor/.env
+ExecStart=/opt/trading-bot/.venv/bin/python /opt/trading-bot/executor/executor.py
+Restart=on-failure
+RestartSec=10
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/trading-bot
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
