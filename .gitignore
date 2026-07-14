@@ -9,6 +9,7 @@
 # ===== Runtime state =====
 executor/state.json
 executor/state.tmp
+executor/orders_history.jsonl
 KILL_SWITCH
 **/KILL_SWITCH
 signals/latest_signal.json

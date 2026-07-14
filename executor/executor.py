@@ -128,6 +128,16 @@ def save_state(config: Dict[str, Any], state: Dict[str, Any]) -> None:
     os.replace(tmp, p)
 
 
+def append_order_history(config: Dict[str, Any], result: Dict[str, Any]) -> None:
+    """Append a filled-order record (one JSON per line) for dashboard history."""
+    hist_path = EXECUTOR_DIR / "orders_history.jsonl"
+    try:
+        with open(hist_path, "a") as f:
+            f.write(json.dumps(result) + "\n")
+    except OSError as e:
+        logging.getLogger("executor").warning("could not write orders_history: %s", e)
+
+
 def rollover_daily(state: Dict[str, Any], now_ts: float) -> Dict[str, Any]:
     today = datetime.fromtimestamp(now_ts, tz=timezone.utc).strftime("%Y-%m-%d")
     if state.get("trades_date") != today:
@@ -377,6 +387,7 @@ def process_signal(
     state.setdefault("processed_run_ids", []).append(run_id)
     state["trades_today"] = int(state.get("trades_today", 0)) + 1
     state["last_order"] = result
+    append_order_history(config, result)
     logger.info("DONE run_id=%s entry=%s SL=%s TP=%s",
                 run_id, result["entry_order_id"], result["sl_order_id"], result["tp_order_id"])
     return {"run_id": run_id, "accepted": True, "placed": True, "result": result}

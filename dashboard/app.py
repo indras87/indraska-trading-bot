@@ -31,6 +31,11 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 
 SIGNAL_FILE = REPO_ROOT / "signals" / "latest_signal.json"
 STATE_FILE = EXECUTOR_DIR / "state.json"
+EXECUTOR_LOG = EXECUTOR_DIR / "executor.log"
+ORDERS_HISTORY = EXECUTOR_DIR / "orders_history.jsonl"
+KLINES_URL = os.environ.get(
+    "SCANNER_BASE_URL", "https://fapi.binance.com"
+) + "/fapi/v1/klines"
 DEFAULT_KILL_SWITCH = REPO_ROOT / "KILL_SWITCH"
 KILL_SWITCH_PATH = Path(
     os.environ.get("KILL_SWITCH_FILE", str(DEFAULT_KILL_SWITCH))
@@ -94,6 +99,72 @@ def _binance_readonly_positions() -> Dict[str, Any]:
         return {"available": False, "reason": f"read-only fetch failed: {e}"}
 
 
+def _executor_status(poll_interval: int = 30) -> Dict[str, Any]:
+    """Infer executor liveness from executor.log mtime (read-only).
+    'alive' = log written within 2x poll interval. Not a process check —
+    just a heartbeat proxy."""
+    import time as _time
+
+    if not EXECUTOR_LOG.exists():
+        return {"available": False, "alive": False, "reason": "no executor log yet"}
+    try:
+        mtime = EXECUTOR_LOG.stat().st_mtime
+        age = _time.time() - mtime
+        # Read last few lines for recent activity.
+        with open(EXECUTOR_LOG, "rb") as f:
+            tail = f.read()[-2000:].decode("utf-8", errors="replace").strip().splitlines()
+        return {
+            "available": True,
+            "alive": age < (poll_interval * 2 + 30),
+            "last_log_age_seconds": round(age, 0),
+            "last_lines": tail[-5:],
+        }
+    except OSError as e:
+        return {"available": False, "alive": False, "reason": str(e)}
+
+
+def _orders_history(limit: int = 20) -> list:
+    """Read last `limit` orders from orders_history.jsonl (newest first)."""
+    if not ORDERS_HISTORY.exists():
+        return []
+    out = []
+    try:
+        with open(ORDERS_HISTORY, "r") as f:
+            lines = f.readlines()
+    except OSError:
+        return []
+    for line in reversed(lines):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            out.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _fetch_klines(symbol: str, interval: str = "1h", limit: int = 100) -> Dict[str, Any]:
+    """PUBLIC market data only (no key, no trading). Returns close series for chart."""
+    import requests
+
+    r = requests.get(
+        KLINES_URL,
+        params={"symbol": symbol.upper(), "interval": interval, "limit": int(limit)},
+        timeout=15,
+    )
+    r.raise_for_status()
+    rows = r.json()
+    # Each kline: [openTime, o, h, l, c, volume, closeTime, ...]
+    series = [
+        {"t": k[0], "o": float(k[1]), "h": float(k[2]), "l": float(k[3]), "c": float(k[4]), "v": float(k[5])}
+        for k in rows
+    ]
+    return {"symbol": symbol.upper(), "interval": interval, "candles": series}
+
+
 # =====================================================================
 # Routes
 # =====================================================================
@@ -101,20 +172,34 @@ def _binance_readonly_positions() -> Dict[str, Any]:
 def status() -> JSONResponse:
     signal = _read_json(SIGNAL_FILE)
     state = _read_json(STATE_FILE)
+    poll = int((state or {}).get("poll_interval_seconds", 0) or 30)
     return JSONResponse(
         {
             "time": datetime.now(timezone.utc).isoformat(),
             "kill_switch_active": _kill_switch_active(),
             "signal": signal,
             "last_order": (state or {}).get("last_order"),
+            "orders_history": _orders_history(20),
             "state": {
                 "processed_run_ids": (state or {}).get("processed_run_ids", []),
                 "trades_today": (state or {}).get("trades_today", 0),
                 "trades_date": (state or {}).get("trades_date", ""),
             },
+            "executor": _executor_status(poll),
             "binance": _binance_readonly_positions(),
         }
     )
+
+
+@app.get("/api/chart")
+def chart(symbol: str, interval: str = "1h", limit: int = 100) -> JSONResponse:
+    """PUBLIC price klines for charting. Read-only, no key, no trading."""
+    try:
+        if int(limit) > 1000:
+            limit = 1000
+        return JSONResponse(_fetch_klines(symbol, interval, limit))
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
 
 
 @app.post("/api/killswitch")

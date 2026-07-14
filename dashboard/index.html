@@ -77,8 +77,31 @@
     </div>
 
     <div class="card" style="grid-column:1/-1">
+      <h2>Executor Status</h2>
+      <div id="exec-status"><span class="muted">—</span></div>
+    </div>
+
+    <div class="card" style="grid-column:1/-1">
+      <h2>Price Chart (read-only public data)</h2>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+        <input id="chart-symbol" value="BTCUSDT" style="width:120px;background:#010409;border:1px solid var(--border);color:var(--text);padding:6px;border-radius:6px" />
+        <select id="chart-interval" style="background:#010409;border:1px solid var(--border);color:var(--text);padding:6px;border-radius:6px">
+          <option>15m</option><option selected>1h</option><option>4h</option><option>1d</option>
+        </select>
+        <button class="btn" onclick="loadChart()">Load</button>
+        <span id="chart-info" class="muted" style="font-size:12px"></span>
+      </div>
+      <canvas id="chart" width="900" height="320" style="width:100%;background:#010409;border:1px solid var(--border);border-radius:6px"></canvas>
+    </div>
+
+    <div class="card" style="grid-column:1/-1">
       <h2>Binance Positions (read-only)</h2>
-      <pre id="binance"><span class="muted">no read-only key configured</span></pre>
+      <div id="binance"><span class="muted">no read-only key configured</span></div>
+    </div>
+
+    <div class="card" style="grid-column:1/-1">
+      <h2>Orders History (last 20)</h2>
+      <div id="history"><span class="muted">none yet</span></div>
     </div>
   </div>
   <div class="footer">localhost-only · read-only except kill switch · poll every 3s</div>
@@ -138,9 +161,47 @@ async function poll(){
          <div class="row"><span>processed</span>${esc((d.state.processed_run_ids||[]).length)}</div>`;
     }
 
-    el("binance").textContent = d.binance && d.binance.available
-      ? JSON.stringify(d.binance.positions||[], null, 2)
-      : (d.binance ? d.binance.reason : "no read-only key configured");
+    // executor status
+    if(d.executor && d.executor.available){
+      el("exec-status").innerHTML =
+        `<span class="pill ${d.executor.alive?'green':'red'}">${d.executor.alive?'ALIVE':'STALE/STOPPED'}</span>
+         <span class="muted" style="margin-left:8px">last log ${esc(d.executor.last_log_age_seconds)}s ago</span>
+         <pre style="margin-top:8px">${esc((d.executor.last_lines||[]).join("\n"))}</pre>`;
+    } else {
+      el("exec-status").innerHTML = `<span class="muted">${esc(d.executor?.reason || "—")}</span>`;
+    }
+
+    // positions table
+    if(d.binance && d.binance.available && (d.binance.positions||[]).length){
+      const rows = d.binance.positions.map(p=>
+        `<tr><td>${esc(p.symbol)}</td><td>${esc(p.positionAmt)}</td><td>${esc(p.entryPrice)}</td>
+         <td style="color:${parseFloat(p.unRealizedProfit)>=0?'var(--green)':'var(--red)'}">${esc(p.unRealizedProfit)}</td>
+         <td>${esc(p.leverage)}x</td></tr>`).join("");
+      el("binance").innerHTML =
+        `<table style="width:100%;border-collapse:collapse;font-size:13px">
+           <tr class="muted"><th align="left">symbol</th><th align="left">amt</th><th align="left">entry</th><th align="left">uPnL</th><th align="left">lev</th></tr>
+           ${rows}</table>
+         <div class="muted" style="font-size:12px;margin-top:6px">testnet=${d.binance.testnet}</div>`;
+    } else {
+      el("binance").innerHTML = `<span class="muted">${esc(d.binance ? d.binance.reason : "no read-only key configured")}</span>`;
+    }
+
+    // orders history
+    const hist = d.orders_history || [];
+    if(hist.length){
+      const rows = hist.map(o=>
+        `<tr><td>${esc((o.executed_at||"").slice(5,19))}</td><td>${esc(o.symbol)}</td>
+         <td style="color:${o.side==='BUY'?'var(--green)':'var(--red)'}">${esc(o.side)}</td>
+         <td>${esc(o.quantity)}</td><td>${esc(o.entry_price)}</td>
+         <td>${esc(o.sl_price)}</td><td>${esc(o.tp_price)}</td></tr>`).join("");
+      el("history").innerHTML =
+        `<table style="width:100%;border-collapse:collapse;font-size:12px">
+           <tr class="muted"><th align="left">time</th><th align="left">symbol</th><th align="left">side</th>
+           <th align="left">qty</th><th align="left">entry</th><th align="left">SL</th><th align="left">TP</th></tr>
+           ${rows}</table>`;
+    } else {
+      el("history").innerHTML = `<span class="muted">none yet</span>`;
+    }
   }catch(e){
     el("live").textContent = "offline";
     el("live").className = "pill red";
@@ -159,8 +220,49 @@ async function toggleKs(enable){
   poll();
 }
 
+// ---- Price chart (read-only public klines) ----
+async function loadChart(){
+  const symbol = el("chart-symbol").value.trim().toUpperCase() || "BTCUSDT";
+  const interval = el("chart-interval").value;
+  el("chart-info").textContent = "loading…";
+  try{
+    const r = await fetch(`/api/chart?symbol=${symbol}&interval=${interval}&limit=200`, {cache:"no-store"});
+    const d = await r.json();
+    if(d.error){ el("chart-info").textContent = d.error; return; }
+    drawChart(d.candles, symbol, interval);
+    el("chart-info").textContent = `${symbol} · ${interval} · ${d.candles.length} candles`;
+  }catch(e){ el("chart-info").textContent = "chart error"; }
+}
+
+function drawChart(candles, symbol, interval){
+  const cv = el("chart"); const ctx = cv.getContext("2d");
+  const W = cv.width, H = cv.height, pad = 40;
+  ctx.clearRect(0,0,W,H);
+  if(!candles.length) return;
+  const closes = candles.map(c=>c.c);
+  const hi = Math.max(...candles.map(c=>c.h)), lo = Math.min(...candles.map(c=>c.l));
+  const y = v => pad + (H-pad*2) * (1 - (v-lo)/(hi-lo || 1));
+  // grid + price labels
+  ctx.strokeStyle = "#30363d"; ctx.fillStyle = "#8b949e"; ctx.font = "11px monospace";
+  for(let i=0;i<=4;i++){
+    const v = lo + (hi-lo)*i/4; const yy = y(v);
+    ctx.beginPath(); ctx.moveTo(pad, yy); ctx.lineTo(W-10, yy); ctx.stroke();
+    ctx.fillText(v.toFixed(v<1?4:0), 2, yy+3);
+  }
+  // close-price line
+  const step = (W-pad-10)/(candles.length-1 || 1);
+  ctx.strokeStyle = "#58a6ff"; ctx.lineWidth = 1.5; ctx.beginPath();
+  closes.forEach((c,i)=>{ const xx = pad + i*step; (i?ctx.lineTo:ctx.moveTo).call(ctx, xx, y(c)); });
+  ctx.stroke();
+  // last price dot
+  const lx = pad + (closes.length-1)*step, ly = y(closes[closes.length-1]);
+  ctx.fillStyle = "#3fb950"; ctx.beginPath(); ctx.arc(lx, ly, 3, 0, 7); ctx.fill();
+  ctx.fillText(closes[closes.length-1].toFixed(closes[closes.length-1]<1?4:0), lx-30, ly-6);
+}
+
 poll();
 setInterval(poll, 3000);
+loadChart();
 </script>
 </body>
 </html>
