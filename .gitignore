@@ -1,0 +1,34 @@
+# ===== Secrets / credentials — NEVER commit =====
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# ===== Runtime state =====
+KILL_SWITCH
+**/KILL_SWITCH
+signals/latest_signal.json
+signals/*.json
+!signals/.gitkeep
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+venv/
+.venv/
+env/
+
+# ===== Logs / reports (regenerated) =====
+*.log
+logs/
+
+# ===== OS / editor =====
+.DS_Store
+.idea/
+.vscode/
+*.swp
