@@ -15,6 +15,9 @@ executor:
   signal_file: signals/latest_signal.json
   state_file: executor/state.json
   log_file: executor/executor.log
+  # Max signals acted on per scan batch. Each = one position. Caps concurrent
+  # exposure (position_size_usdt x N). Raise/lower to taste.
+  max_signals_per_run: 5
 
 risk_guard:
   min_confidence: 0.60
@@ -34,9 +37,6 @@ trading:
   position_size_usdt: 60
   sl_percent: 2.0          # stop loss %
   tp_percent: 4.0          # take profit %
-  symbols_allowed:
-    - BTCUSDT
-    - ETHUSDT
-    - SOLUSDT
-    - BNBUSDT
-    - XRPUSDT
+  # symbols_allowed: empty = allow ALL USDT-perp that the scanner emits.
+  # To restrict trading to a whitelist, list symbols here (e.g. [BTCUSDT, ETHUSDT]).
+  symbols_allowed: []

@@ -101,14 +101,19 @@ async function poll(){
       : '<span class="pill green">inactive (trading live)</span>';
 
     if(d.signal){
-      const s = d.signal;
+      // signal may be a single object or a list (scan mode).
+      const sigs = Array.isArray(d.signal) ? d.signal : [d.signal];
+      const rows = sigs.map(s =>
+        `<div style="border:1px solid var(--border);border-radius:6px;padding:8px;margin-bottom:6px">
+           <div class="row"><span>symbol</span><b>${esc(s.symbol)}</b></div>
+           <div class="row"><span>action</span><b>${esc(s.action)}</b></div>
+           <div class="row"><span>confidence</span>${esc(s.confidence)}</div>
+           <div class="row"><span>run_id</span><code>${esc(s.run_id)}</code></div>
+           <div class="row"><span>age</span>${esc(s.generated_at)}</div>
+           <div class="muted" style="margin-top:4px;font-size:12px">${esc(s.reason||"")}</div>
+         </div>`).join("");
       el("signal").innerHTML =
-        `<div class="row"><span>symbol</span><b>${esc(s.symbol)}</b></div>
-         <div class="row"><span>action</span><b>${esc(s.action)}</b></div>
-         <div class="row"><span>confidence</span>${esc(s.confidence)}</div>
-         <div class="row"><span>run_id</span><code>${esc(s.run_id)}</code></div>
-         <div class="row"><span>age</span>${esc(s.generated_at)}</div>
-         <div class="muted" style="margin-top:6px">${esc(s.reason||"")}</div>`;
+        `<div class="muted" style="margin-bottom:6px">${sigs.length} signal(s)</div>${rows}`;
     }
 
     if(d.last_order){

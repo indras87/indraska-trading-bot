@@ -1,14 +1,19 @@
 """
 generate_signal.py — research/signal side ONLY. Never sends orders.
 
-Provider priority:
-  1. Z.ai GLM (OpenAI-compatible) if ZAI_API_KEY is set in env.
-  2. vibe-trading-ai package if importable and configured (best-effort).
-  3. Deterministic MOCK signal (default) — for testnet end-to-end without
-     an LLM key.
+Providers:
+  scan  (default): market-scan ALL USDT-perp on Binance (public data), rank
+                   top-N by liquidity+momentum, compute RSI, then either
+                   Z.ai GLM decides BUY/SELL/confidence for the shortlist OR
+                   a rule-based fallback (no ZAI_API_KEY). Writes a LIST of
+                   signals. This is real "scanning".
+  zai:            single-symbol GLM signal (legacy 5-coin list).
+  vibe:           vibe-trading-ai package (best-effort).
+  mock:           deterministic single mock signal (testnet quick-test).
 
 Writes:  <repo>/signals/latest_signal.json
-Shape:   {symbol, action, confidence, reason, run_id, generated_at}
+Shape:   single signal dict {symbol, action, confidence, reason, run_id,
+         generated_at}  — OR —  a JSON array of such dicts (scan mode).
 
 NOTE on architecture (CLAUDE.md): the documented stack is the
 `vibe-trading-ai` pip package with Z.ai GLM Coding Plan. That package pulls
@@ -42,14 +47,30 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def write_signal(signal: dict) -> None:
+def write_signal(signal) -> None:
+    """Write a single signal dict OR a list of signal dicts (scan mode)."""
     SIGNAL_FILE.parent.mkdir(parents=True, exist_ok=True)
-    # Atomic write.
     tmp = SIGNAL_FILE.with_suffix(".tmp")
     with open(tmp, "w") as f:
         json.dump(signal, f, indent=2)
     os.replace(tmp, SIGNAL_FILE)
-    print(f"[signal] wrote {SIGNAL_FILE}: {signal}")
+    if isinstance(signal, list):
+        print(f"[signal] wrote {len(signal)} signals to {SIGNAL_FILE}")
+        for s in signal:
+            print(f"  - {s['symbol']} {s['action']} conf={s['confidence']}")
+    else:
+        print(f"[signal] wrote {SIGNAL_FILE}: {signal}")
+
+
+def _new_signal(symbol: str, action: str, confidence: float, reason: str, tag: str) -> dict:
+    return {
+        "symbol": str(symbol).upper(),
+        "action": str(action).upper(),
+        "confidence": float(confidence),
+        "reason": str(reason)[:300],
+        "run_id": f"{tag}-{uuid.uuid4().hex[:8]}",
+        "generated_at": now_iso(),
+    }
 
 
 # ---------------------------------------------------------------------
@@ -155,29 +176,142 @@ def vibe_trading_ai_signal() -> dict:
 
 
 # ---------------------------------------------------------------------
+# Market SCAN provider (all USDT-perp). Uses scanner.py + Z.ai GLM,
+# with a rule-based fallback when ZAI_API_KEY is absent.
+# ---------------------------------------------------------------------
+def _glm_decide_scan(candidates: list) -> list:
+    """Send ranked shortlist to Z.ai GLM; return list of decision dicts."""
+    import requests
+
+    base = os.environ.get("ZAI_BASE_URL", DEFAULT_BASE_URL).rstrip("/")
+    model = os.environ.get("ZAI_MODEL", DEFAULT_MODEL)
+    key = os.environ.get("ZAI_API_KEY")
+    if not key:
+        raise RuntimeError("ZAI_API_KEY not set")
+
+    # Build a compact market table.
+    lines = ["symbol | price | 24h_change% | 24h_quote_vol_USDT | RSI"]
+    for c in candidates:
+        rsi = c.get("rsi")
+        rsi_s = f"{rsi:.1f}" if isinstance(rsi, (int, float)) else "n/a"
+        lines.append(
+            f"{c['symbol']} | {c['price']} | {c['change_pct']:.2f} | "
+            f"{c['quote_volume']:.0f} | {rsi_s}"
+        )
+    table = "\n".join(lines)
+
+    system = (
+        "You are a crypto futures trader. Given ranked market data (top movers "
+        "by liquidity+momentum, with RSI), return the trades worth taking now. "
+        'Output STRICT JSON only: an array of objects '
+        '{"symbol":str, "action":"BUY"|"SELL", "confidence":float 0..1, '
+        '"reason":str}. Only include trades you actually recommend (confidence '
+        '>= 0.6). BUY = expect up, SELL = expect down. Use RSI: >70 overbought '
+        '(favor SELL), <30 oversold (favor BUY). Empty array [] if nothing good.'
+    )
+    user = f"Current UTC: {now_iso()}\nMarket data:\n{table}"
+
+    resp = requests.post(
+        f"{base}/chat/completions",
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        json={
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "temperature": 0.3,
+        },
+        timeout=90,
+    )
+    resp.raise_for_status()
+    content = resp.json()["choices"][0]["message"]["content"].strip()
+    if content.startswith("```"):
+        content = content.strip("`")
+        if content.lower().startswith("json"):
+            content = content[4:].strip()
+    decisions = json.loads(content)
+    if isinstance(decisions, dict):
+        decisions = [decisions]
+    return decisions
+
+
+def _rule_decide_scan(candidates: list, min_confidence: float = 0.6) -> list:
+    """Rule-based fallback (no LLM). action from momentum, confidence from
+    move size + RSI distance from 50. Drops anything below min_confidence."""
+    out = []
+    for c in candidates:
+        chg = c.get("change_pct", 0)
+        rsi = c.get("rsi")
+        action = "BUY" if chg >= 0 else "SELL"
+        conf = 0.5 + abs(chg) / 100.0 * 0.4
+        if isinstance(rsi, (int, float)):
+            conf += abs(rsi - 50) / 100.0 * 0.3
+        conf = max(0.0, min(0.95, conf))
+        if conf < min_confidence:
+            continue
+        rsi_s = f"{rsi:.1f}" if isinstance(rsi, (int, float)) else "n/a"
+        out.append(
+            _new_signal(
+                c["symbol"], action, conf,
+                f"RULE scan: 24h {chg:+.2f}%, RSI {rsi_s}, vol {c['quote_volume']/1e6:.1f}M",
+                "scan-rule",
+            )
+        )
+    return out
+
+
+def scan_signals(top_n: int = 10, max_picks: int = 5, min_confidence: float = 0.6) -> list:
+    import scanner
+
+    candidates = scanner.scan(top_n=top_n)
+    print(f"[scan] {len(candidates)} candidates ranked", file=sys.stderr)
+    try:
+        if os.environ.get("ZAI_API_KEY"):
+            decisions = _glm_decide_scan(candidates)
+            tag = "scan-glm"
+            signals = []
+            for d in decisions[:max_picks]:
+                sym = str(d.get("symbol", "")).upper()
+                action = str(d.get("action", "")).upper()
+                if action not in ("BUY", "SELL"):
+                    continue
+                signals.append(
+                    _new_signal(sym, action, float(d.get("confidence", 0)),
+                                str(d.get("reason", "")), tag)
+                )
+        else:
+            raise RuntimeError("no ZAI_API_KEY -> rule-based")
+    except Exception as e:
+        print(f"[scan] GLM unavailable ({e}); using rule-based fallback", file=sys.stderr)
+        signals = _rule_decide_scan(candidates, min_confidence)[:max_picks]
+    return signals
+
+
+# ---------------------------------------------------------------------
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mock", action="store_true", help="force mock signal")
+    ap.add_argument("--mock", action="store_true", help="force single mock signal")
     ap.add_argument(
         "--provider",
-        choices=["auto", "zai", "vibe", "mock"],
+        choices=["auto", "scan", "zai", "vibe", "mock"],
         default="auto",
     )
     ap.add_argument("--symbol", default="BTCUSDT")
     ap.add_argument("--action", default="BUY", choices=ALLOWED_ACTIONS)
+    ap.add_argument("--top-n", type=int, default=10, help="scan: shortlist size")
+    ap.add_argument("--max-picks", type=int, default=5, help="scan: max signals emitted")
+    ap.add_argument("--min-confidence", type=float, default=0.6)
     args = ap.parse_args()
 
     provider = args.provider
     if provider == "auto":
-        if args.mock:
-            provider = "mock"
-        elif os.environ.get("ZAI_API_KEY"):
-            provider = "zai"
-        else:
-            provider = "mock"
+        provider = "mock" if args.mock else "scan"
 
     try:
-        if provider == "zai":
+        if provider == "scan":
+            signal = scan_signals(args.top_n, args.max_picks, args.min_confidence)
+        elif provider == "zai":
             signal = zai_signal()
         elif provider == "vibe":
             signal = vibe_trading_ai_signal()

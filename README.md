@@ -62,8 +62,10 @@ trading-bot/
 │   └── .gitkeep
 │
 ├── vibe-trading/              # SUBSISTEM 1 — riset & sinyal
-│   ├── generate_signal.py     # provider: Z.ai GLM → vibe-trading-ai → mock
+│   ├── generate_signal.py     # providers: scan (all USDT-perp) → zai → vibe → mock
 │   ├── generate_signal.sh     # wrapper (load .env, pilih venv python)
+│   ├── scanner.py             # market scanner (public Binance data: universe+ticker+RSI)
+│   ├── test_scanner.py        # unit test ranking + RSI
 │   ├── requirements.txt
 │   └── .env.example           # ZAI_API_KEY, ZAI_BASE_URL, ZAI_MODEL
 │
@@ -116,11 +118,25 @@ python executor.py --once     # proses satu sinyal lalu exit (testing)
 
 ### Signal generator (`generate_signal.sh`)
 ```bash
-./vibe-trading/generate_signal.sh                      # auto (ZAI_API_KEY atau mock)
-./vibe-trading/generate_signal.sh --mock               # paksa mock
-./vibe-trading/generate_signal.sh --provider zai       # paksa Z.ai GLM
+# SCAN (default) — scan ALL ~530 USDT-perp, rank top-N, GLM picks trades.
+# Writes a LIST of signals. Rule-based fallback if no ZAI_API_KEY.
+./vibe-trading/generate_signal.sh                       # scan, top-10, max 5 picks
+./vibe-trading/generate_signal.sh --provider scan --top-n 20 --max-picks 3
+./vibe-trading/generate_signal.sh --provider scan --min-confidence 0.7
+
+# Single-symbol providers (legacy / quick test)
+./vibe-trading/generate_signal.sh --mock                # single deterministic mock
+./vibe-trading/generate_signal.sh --provider zai        # single GLM signal
 ./vibe-trading/generate_signal.sh --symbol ETHUSDT --action SELL
 ```
+
+**Scan pipeline** (`vibe-trading/scanner.py`, public Binance data — no key, no orders):
+1. Fetch all USDT-M perpetuals (`exchangeInfo`).
+2. 24h ticker for every symbol (volume + price change, one call).
+3. Liquidity filter (`min_quote_volume`) → rank by `log(volume) × (1+|change|)`.
+4. RSI (1h, period 14) for the shortlist.
+5. Top-N table → Z.ai GLM returns `[{symbol, action, confidence, reason}]` (filter confidence ≥ threshold).
+6. Without `ZAI_API_KEY`: rule-based fallback (action from momentum, confidence from move + RSI distance).
 
 ### Dashboard API (`dashboard/app.py`, bind `127.0.0.1:8080`)
 | Method | Path | Auth | Fungsi |
@@ -145,13 +161,23 @@ curl -X POST "http://127.0.0.1:8080/api/killswitch?enable=true" \
 **Tidak ada database relasional.** Semua state disimpan sebagai file JSON — sengaja, agar komponen terpisah dan mudah diaudit.
 
 ### `signals/latest_signal.json` (jembatan sinyal)
+Satu sinyal = **object**, atau **array** of objects (scan mode menghasilkan array):
+```jsonc
+// scan mode -> array:
+[
+  { "symbol": "LABUSDT", "action": "BUY", "confidence": 0.80,
+    "reason": "...", "run_id": "scan-glm-...", "generated_at": "..." },
+  { "symbol": "ETHUSDT", "action": "BUY", "confidence": 0.78, ... }
+]
+```
+Field tiap sinyal:
 ```jsonc
 {
-  "symbol": "BTCUSDT",          // harus ada di config.trading.symbols_allowed
+  "symbol": "BTCUSDT",          // jika config symbols_allowed kosong = bebas
   "action": "BUY",              // BUY | SELL | HOLD
   "confidence": 0.75,           // float 0..1, minimal config.risk_guard.min_confidence
-  "reason": "...",              // alasan singkat dari LLM/mock
-  "run_id": "mock-e2993a6c",    // id unik, dipakai dedup (sekali proses)
+  "reason": "...",              // alasan singkat dari LLM/rule/mock
+  "run_id": "scan-glm-...",     // id unik, dipakai dedup (sekali proses)
   "generated_at": "2026-07-14T11:34:28.897369+00:00"  // ISO 8601; max age dari config
 }
 ```
@@ -180,6 +206,7 @@ executor:
   poll_interval_seconds: 30
   signal_file: signals/latest_signal.json
   state_file: executor/state.json
+  max_signals_per_run: 5        # max posisi per batch scan (cap exposure)
 risk_guard:
   min_confidence: 0.60
   max_signal_age_seconds: 300
@@ -188,10 +215,10 @@ risk_guard:
   allowed_actions: [BUY, SELL]
 trading:
   leverage: 1                   # KONSERVATIF — butuh angka spesifik dari user untuk dinaikkan
-  position_size_usdt: 20
+  position_size_usdt: 60        # >= MIN_NOTIONAL floor (BTCUSDT=50)
   sl_percent: 2.0
   tp_percent: 4.0
-  symbols_allowed: [BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT]
+  symbols_allowed: []           # kosong = allow ALL USDT-perp (scan mode)
 ```
 
 ### `KILL_SWITCH` (file presence)

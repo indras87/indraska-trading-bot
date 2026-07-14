@@ -79,17 +79,31 @@ def setup_logging(config: Dict[str, Any]) -> logging.Logger:
 # =====================================================================
 # Signal / state persistence
 # =====================================================================
-def read_signal(config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def read_signals(config: Dict[str, Any]) -> Optional[list]:
+    """Read signal file and normalize to a LIST of signal dicts.
+    Accepts: a single signal dict, a JSON array, or {"signals":[...]}."""
     sig_path = config.get("executor", {}).get("signal_file", "signals/latest_signal.json")
     p = (REPO_ROOT / sig_path) if not os.path.isabs(sig_path) else Path(sig_path)
     if not p.exists():
         return None
     try:
         with open(p, "r") as f:
-            return json.load(f)
+            data = json.load(f)
     except (json.JSONDecodeError, OSError) as e:
         logging.getLogger("executor").error("failed reading signal file %s: %s", p, e)
         return None
+    if isinstance(data, dict):
+        if isinstance(data.get("signals"), list):
+            return data["signals"]
+        return [data]
+    if isinstance(data, list):
+        return data
+    return None
+
+
+# Back-compat alias.
+def read_signal(config: Dict[str, Any]) -> Optional[list]:
+    return read_signals(config)
 
 
 def load_state(config: Dict[str, Any]) -> Dict[str, Any]:
@@ -393,27 +407,36 @@ def main() -> int:
     client = init_client(testnet, logger)
 
     poll = int(config.get("executor", {}).get("poll_interval_seconds", 30))
-    last_run_id = None
+    max_signals_per_run = int(config.get("executor", {}).get("max_signals_per_run", 10))
+    last_batch: tuple | None = None
 
-    logger.info("executor started (testnet=%s, poll=%ss)", testnet, poll)
+    logger.info(
+        "executor started (testnet=%s, poll=%ss, max_signals_per_run=%d)",
+        testnet, poll, max_signals_per_run,
+    )
     while True:
         try:
             now_ts = time.time()
-            signal = read_signal(config)
-            if signal is None:
+            signals = read_signals(config)
+            if signals is None:
                 logger.debug("no signal file")
             else:
-                run_id = signal.get("run_id")
-                if run_id != last_run_id:
+                batch = tuple(s.get("run_id") for s in signals)
+                if batch != last_batch:
+                    last_batch = batch
+                    logger.info("new signal batch: %d signal(s)", len(signals))
                     state = load_state(config)
-                    outcome = process_signal(
-                        client, logger, config, guard, signal, state, now_ts=now_ts
-                    )
+                    placed_any = False
+                    for signal in signals[:max_signals_per_run]:
+                        outcome = process_signal(
+                            client, logger, config, guard, signal, state, now_ts=now_ts
+                        )
+                        if outcome.get("placed"):
+                            placed_any = True
                     save_state(config, state)
-                    last_run_id = run_id
                     if args.once:
-                        logger.info("--once mode: exiting after one signal")
-                        return 0 if outcome.get("placed") or not outcome.get("accepted") else 1
+                        logger.info("--once mode: exiting after batch")
+                        return 0 if placed_any else 0
         except KeyboardInterrupt:
             logger.info("interrupted, exiting")
             return 0

@@ -145,3 +145,43 @@ trading:
 3. Kalau repo ini pernah di-push dengan token asli di `.example`, **regenerate token** itu (anggap sudah bocor).
 
 Saya **tidak** commit perubahan `dashboard/.env.example` dan **tidak** meng-editnya diam-diam — butuh keputusan user karena ini menyentuh kredensial.
+
+---
+
+## 8. Market scanner — scan SEMUA USDT-perp (✅ terverifikasi testnet)
+
+User minta fitur scan semua coin (bukan 5 coin). Dibangun **market scan** sungguhan:
+
+**Pipeline** (`vibe-trading/scanner.py`, baca **public market data** Binance mainnet — tanpa key, tanpa order):
+1. `exchangeInfo` → ~530 USDT-M perpetual aktif.
+2. `ticker/24hr` (1 call, semua symbol) → volume + 24h change.
+3. Filter likuiditas (`min_quote_volume`) → ranking `log(volume)×(1+|change|)`.
+4. RSI(1h, 14) untuk top shortlist.
+5. Tabel top-N → **Z.ai GLM** putuskan `[{symbol, action, confidence, reason}]` (filter conf ≥ threshold).
+6. Fallback **rule-based** (action dari momentum, conf dari move+RSI) kalau `ZAI_API_KEY` belum diset.
+
+**Executor multi-signal** (`executor.py`):
+- `read_signals()` normalize signal file → list (dukung single object / array / `{signals:[...]}`).
+- Loop proses **batch**: tiap batch baru (set `run_id` berubah) → validasi + order tiap sinyal yang lolos `risk_guard`.
+- `config.executor.max_signals_per_run` (default 5) cap posisi per batch.
+- `config.trading.symbols_allowed: []` (kosong) = **allow all** USDT-perp (sudah didukung risk_guard dari awal).
+
+**Test testnet (GLM scan, `ZAI_API_KEY` aktif):**
+```
+generate_signal.sh --provider scan --top-n 10 --max-picks 3
+  → [scan] 10 candidates ranked
+  → 2 signals: LABUSDT BUY conf=0.80, ALCHUSDT BUY conf=0.75
+executor.py --once
+  → new signal batch: 2 signal(s)
+  → LABUSDT:  MARKET filled + SL + TP (algo orders) ✓
+  → ALCHUSDT: MARKET filled + SL + TP (algo orders) ✓
+verify:
+  → 2 open positions (LABUSDT, ALCHUSDT) lev 1 ✓
+  → state trades_today=2, processed=2 ✓
+  → dashboard /api/status tampilkan 2 signals + last_order ✓
+```
+GLM mengembalikan alasan (mis. "Capitulation setup: RSI 16 oversold + volume besar → bounce"). Posisi tes ditutup setelah verifikasi.
+
+**Catatan risiko multi-coin:** scan bisa membuka banyak posisi sekaligus → exposure = `position_size_usdt × N`. Cap dengan `max_signals_per_run` + `risk_guard.max_daily_trades` (default 10). Token equity/volatilitas kecil (mis. LABUSDT) sering muncul di top karena ranking beri bobot |change%| — sesuaikan `min_quote_volume` kalau mau hanya coin besar.
+
+**Test:** `pytest vibe-trading/test_scanner.py executor/test_risk_guard.py` → **27 passed** (ranking, RSI 0/50/100, allow-all, dedup, dll).

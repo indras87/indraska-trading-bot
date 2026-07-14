@@ -152,11 +152,21 @@ def test_unknown_action_blocks(guard):
 # ---------------------------------------------------------------------
 # Symbol not allowed
 # ---------------------------------------------------------------------
-def test_disallowed_symbol_blocks(guard):
-    sig = make_signal(symbol="DOGEUSDT")  # not in default allowed list
-    ok, reason = guard.validate(sig, fresh_state(), now_ts=NOW)
+def test_disallowed_symbol_blocks(config):
+    # Force a whitelist (real config now ships empty = allow all).
+    config["trading"]["symbols_allowed"] = ["BTCUSDT", "ETHUSDT"]
+    g = RiskGuard(config)
+    sig = make_signal(symbol="DOGEUSDT")
+    ok, reason = g.validate(sig, fresh_state(), now_ts=NOW)
     assert ok is False
     assert "symbol_blocked" in reason
+
+
+def test_empty_allowlist_allows_any(guard):
+    # Real config ships symbols_allowed: [] -> scanner symbols accepted.
+    sig = make_signal(symbol="SOMERANDOMUSDT")
+    ok, _ = guard.validate(sig, fresh_state(), now_ts=NOW)
+    assert ok is True
 
 
 # ---------------------------------------------------------------------
