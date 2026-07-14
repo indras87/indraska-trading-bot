@@ -261,31 +261,70 @@ def _rule_decide_scan(candidates: list, min_confidence: float = 0.6) -> list:
     return out
 
 
-def scan_signals(top_n: int = 10, max_picks: int = 5, min_confidence: float = 0.6) -> list:
+def scan_signals(
+    top_n: int = 20,
+    max_picks: int = 10,
+    min_confidence: float = 0.6,
+    min_quote_volume: float = 0,
+) -> list:
+    """Scan all USDT-perp, rank, ask GLM (or rule fallback), return signals.
+    Also writes a scan report to signals/last_scan.json for the dashboard."""
     import scanner
 
-    candidates = scanner.scan(top_n=top_n)
-    print(f"[scan] {len(candidates)} candidates ranked", file=sys.stderr)
+    universe = scanner.get_usdt_perp_symbols()
+    candidates = scanner.scan(top_n=top_n, min_quote_volume=min_quote_volume)
+    print(
+        f"[scan] universe={len(universe)} candidates_ranked(top {top_n})={len(candidates)}",
+        file=sys.stderr,
+    )
+
+    provider_used = "rule"
+    raw_decisions: list = []
     try:
         if os.environ.get("ZAI_API_KEY"):
-            decisions = _glm_decide_scan(candidates)
-            tag = "scan-glm"
+            raw_decisions = _glm_decide_scan(candidates)
+            provider_used = "glm"
             signals = []
-            for d in decisions[:max_picks]:
+            for d in raw_decisions[:max_picks]:
                 sym = str(d.get("symbol", "")).upper()
                 action = str(d.get("action", "")).upper()
                 if action not in ("BUY", "SELL"):
                     continue
                 signals.append(
                     _new_signal(sym, action, float(d.get("confidence", 0)),
-                                str(d.get("reason", "")), tag)
+                                str(d.get("reason", "")), "scan-glm")
                 )
         else:
             raise RuntimeError("no ZAI_API_KEY -> rule-based")
     except Exception as e:
         print(f"[scan] GLM unavailable ({e}); using rule-based fallback", file=sys.stderr)
+        provider_used = "rule"
         signals = _rule_decide_scan(candidates, min_confidence)[:max_picks]
+
+    # Write scan report for dashboard (read-only consumption).
+    report = {
+        "scanned_at": now_iso(),
+        "provider": provider_used,
+        "universe_count": len(universe),
+        "min_quote_volume": min_quote_volume,
+        "top_n": top_n,
+        "max_picks": max_picks,
+        "top_candidates": candidates,
+        "glm_decisions": raw_decisions if provider_used == "glm" else [],
+        "signals_emitted": signals,
+    }
+    _write_scan_report(report)
     return signals
+
+
+def _write_scan_report(report: dict) -> None:
+    p = REPO_ROOT / "signals" / "last_scan.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".tmp")
+    with open(tmp, "w") as f:
+        json.dump(report, f, indent=2)
+    os.replace(tmp, p)
+    print(f"[scan] report -> {p}", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------
@@ -299,9 +338,15 @@ def main() -> int:
     )
     ap.add_argument("--symbol", default="BTCUSDT")
     ap.add_argument("--action", default="BUY", choices=ALLOWED_ACTIONS)
-    ap.add_argument("--top-n", type=int, default=10, help="scan: shortlist size")
-    ap.add_argument("--max-picks", type=int, default=5, help="scan: max signals emitted")
+    ap.add_argument("--top-n", type=int, default=20, help="scan: shortlist size (RSI computed for these)")
+    ap.add_argument("--max-picks", type=int, default=10, help="scan: max signals emitted/traded")
     ap.add_argument("--min-confidence", type=float, default=0.6)
+    ap.add_argument(
+        "--min-quote-volume",
+        type=float,
+        default=0,
+        help="scan: min 24h USDT volume to qualify (0 = scan ALL coins)",
+    )
     args = ap.parse_args()
 
     provider = args.provider
@@ -310,7 +355,9 @@ def main() -> int:
 
     try:
         if provider == "scan":
-            signal = scan_signals(args.top_n, args.max_picks, args.min_confidence)
+            signal = scan_signals(
+                args.top_n, args.max_picks, args.min_confidence, args.min_quote_volume
+            )
         elif provider == "zai":
             signal = zai_signal()
         elif provider == "vibe":

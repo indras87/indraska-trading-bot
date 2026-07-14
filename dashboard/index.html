@@ -100,6 +100,11 @@
     </div>
 
     <div class="card" style="grid-column:1/-1">
+      <h2>Scan Process (read-only)</h2>
+      <div id="scan"><span class="muted">no scan yet</span></div>
+    </div>
+
+    <div class="card" style="grid-column:1/-1">
       <h2>Orders History (last 20)</h2>
       <div id="history"><span class="muted">none yet</span></div>
     </div>
@@ -263,6 +268,38 @@ function drawChart(candles, symbol, interval){
 poll();
 setInterval(poll, 3000);
 loadChart();
+loadScan();
+setInterval(loadScan, 10000);
+
+// ---- Scan report (read-only) ----
+async function loadScan(){
+  try{
+    const r = await fetch("/api/scan", {cache:"no-store"});
+    const d = await r.json();
+    if(!d || d.available === false){
+      el("scan").innerHTML = `<span class="muted">${esc(d?.reason||"no scan yet")}</span>`; return;
+    }
+    const tc = (d.top_candidates||[]).map((c,i)=>
+      `<tr><td>${i+1}</td><td><b>${esc(c.symbol)}</b></td>
+       <td style="color:${(c.change_pct||0)>=0?'var(--green)':'var(--red)'}">${(c.change_pct||0).toFixed(2)}%</td>
+       <td>${((c.quote_volume||0)/1e6).toFixed(1)}M</td>
+       <td>${c.rsi!=null?(typeof c.rsi==='number'?c.rsi.toFixed(1):esc(c.rsi)):'-'}</td>
+       <td>${(c.score||0).toFixed(2)}</td></tr>`).join("");
+    const em = (d.signals_emitted||[]).map(s=>
+      `<span class="pill ${s.action==='BUY'?'green':'red'}" style="margin:2px">${esc(s.symbol)} ${esc(s.action)} ${esc(s.confidence)}</span>`).join("");
+    el("scan").innerHTML =
+      `<div class="row"><span>scanned at</span>${esc((d.scanned_at||"").slice(0,19))}</div>
+       <div class="row"><span>provider</span><b>${esc(d.provider)}</b></div>
+       <div class="row"><span>universe scanned</span><b>${esc(d.universe_count)}</b> coins</div>
+       <div class="row"><span>min_quote_volume</span>${esc(d.min_quote_volume)} USDT</div>
+       <div class="row"><span>top_n shortlist</span>${esc(d.top_n)}</div>
+       <div style="margin:8px 0"><span class="muted">signals emitted:</span> ${em||'<span class="muted">none</span>'}</div>
+       <details><summary class="muted" style="cursor:pointer">top ${esc((d.top_candidates||[]).length)} candidates (ranked)</summary>
+         <table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:6px">
+           <tr class="muted"><th>#</th><th align="left">symbol</th><th align="left">24h</th><th align="left">vol</th><th align="left">RSI</th><th align="left">score</th></tr>
+           ${tc}</table></details>`;
+  }catch(e){ el("scan").innerHTML = `<span class="muted">scan load error</span>`; }
+}
 </script>
 </body>
 </html>

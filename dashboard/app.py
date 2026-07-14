@@ -30,6 +30,7 @@ EXECUTOR_DIR = REPO_ROOT / "executor"
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
 SIGNAL_FILE = REPO_ROOT / "signals" / "latest_signal.json"
+SCAN_FILE = REPO_ROOT / "signals" / "last_scan.json"
 STATE_FILE = EXECUTOR_DIR / "state.json"
 EXECUTOR_LOG = EXECUTOR_DIR / "executor.log"
 ORDERS_HISTORY = EXECUTOR_DIR / "orders_history.jsonl"
@@ -192,7 +193,7 @@ def status() -> JSONResponse:
 
 
 @app.get("/api/chart")
-def chart(symbol: str, interval: str = "1h", limit: int = 100) -> JSONResponse:
+def chart(symbol: str, interval: str = "1h", limit: int = 1000) -> JSONResponse:
     """PUBLIC price klines for charting. Read-only, no key, no trading."""
     try:
         if int(limit) > 1000:
@@ -200,6 +201,15 @@ def chart(symbol: str, interval: str = "1h", limit: int = 100) -> JSONResponse:
         return JSONResponse(_fetch_klines(symbol, interval, limit))
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=502)
+
+
+@app.get("/api/scan")
+def scan_report() -> JSONResponse:
+    """Last scan report written by the signal generator. Read-only."""
+    report = _read_json(SCAN_FILE)
+    if report is None:
+        return JSONResponse({"available": False, "reason": "no scan run yet"})
+    return JSONResponse(report)
 
 
 @app.post("/api/killswitch")

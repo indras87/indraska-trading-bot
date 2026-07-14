@@ -17,7 +17,7 @@ executor:
   log_file: executor/executor.log
   # Max signals acted on per scan batch. Each = one position. Caps concurrent
   # exposure (position_size_usdt x N). Raise/lower to taste.
-  max_signals_per_run: 5
+  max_signals_per_run: 10
 
 risk_guard:
   min_confidence: 0.60
