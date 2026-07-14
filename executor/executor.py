@@ -200,6 +200,20 @@ def round_step(value: float, step: float) -> float:
     return round(steps * step, 10)
 
 
+def _cond_id(order: Dict[str, Any]) -> Any:
+    """Conditional (STOP/TP) orders return `algoId` on the Futures Demo
+    testnet and `orderId` elsewhere. Handle both."""
+    return order.get("algoId") or order.get("orderId")
+
+
+def _cond_status(order: Dict[str, Any]) -> Any:
+    return order.get("algoStatus") or order.get("status")
+
+
+def _cond_stop(order: Dict[str, Any]) -> Any:
+    return order.get("triggerPrice") or order.get("stopPrice")
+
+
 # =====================================================================
 # Order placement — the single order entrypoint.
 # Goes through RiskGuard.validate() in process_signal() BEFORE this is called.
@@ -284,7 +298,8 @@ def place_futures_order(
         closePosition=True,
         workingType="MARK_PRICE",
     )
-    logger.info("SL placed orderId=%s stopPrice=%s", sl_order.get("orderId"), sl_price)
+    sl_id = _cond_id(sl_order)
+    logger.info("SL placed id=%s stopPrice=%s status=%s", sl_id, sl_price, _cond_status(sl_order))
 
     # 3) Take profit.
     tp_order = client.futures_create_order(
@@ -295,7 +310,8 @@ def place_futures_order(
         closePosition=True,
         workingType="MARK_PRICE",
     )
-    logger.info("TP placed orderId=%s stopPrice=%s", tp_order.get("orderId"), tp_price)
+    tp_id = _cond_id(tp_order)
+    logger.info("TP placed id=%s stopPrice=%s status=%s", tp_id, tp_price, _cond_status(tp_order))
 
     return {
         "symbol": symbol,
@@ -306,8 +322,8 @@ def place_futures_order(
         "tp_price": tp_price,
         "leverage": leverage,
         "entry_order_id": entry_id,
-        "sl_order_id": sl_order.get("orderId"),
-        "tp_order_id": tp_order.get("orderId"),
+        "sl_order_id": sl_id,
+        "tp_order_id": tp_id,
         "status": "filled",
         "executed_at": datetime.now(timezone.utc).isoformat(),
         "run_id": signal.get("run_id"),

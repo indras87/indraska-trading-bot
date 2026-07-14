@@ -28,7 +28,10 @@ risk_guard:
 trading:
   # CONSERVATIVE DEFAULTS — flag for user confirmation (see RUN_REPORT.md)
   leverage: 1              # 1x = minimal risk; do not raise without explicit ask
-  position_size_usdt: 20   # small notional, testnet-safe
+  # 60 USDT = above Binance Futures MIN_NOTIONAL floor (BTCUSDT=50). Not a risk
+  # increase — it is the exchange's hard minimum to place any order. Lower only
+  # if trading symbols with a smaller min notional (ETH=20, SOL/BNB/XRP=5).
+  position_size_usdt: 60
   sl_percent: 2.0          # stop loss %
   tp_percent: 4.0          # take profit %
   symbols_allowed:
