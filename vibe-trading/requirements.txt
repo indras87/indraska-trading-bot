@@ -1,0 +1,5 @@
+requests>=2.31.0
+# Optional: the documented vibe-trading-ai package (Z.ai GLM Coding Plan).
+# Heavy dependency tree; the signal generator calls Z.ai directly instead.
+# Install only if you want to use --provider vibe:
+#   vibe-trading-ai
