@@ -1,0 +1,39 @@
+# =====================================================================
+# Executor configuration — Binance Futures
+# WARNING: leverage & position_size_usdt are CONSERVATIVE defaults.
+# Change ONLY after explicit user request with specific numbers.
+# testnet flag here is IGNORED if BINANCE_TESTNET env var is set
+# (env var wins; default MUST stay testnet=true).
+# =====================================================================
+
+binance:
+  testnet: true            # default; overridden by env BINANCE_TESTNET
+  testnet_url: https://testnet.binancefuture.com/fapi
+
+executor:
+  poll_interval_seconds: 30
+  signal_file: signals/latest_signal.json
+  state_file: executor/state.json
+  log_file: executor/executor.log
+
+risk_guard:
+  min_confidence: 0.60
+  max_signal_age_seconds: 300
+  max_daily_trades: 10
+  kill_switch_file: KILL_SWITCH
+  allowed_actions:
+    - BUY
+    - SELL
+
+trading:
+  # CONSERVATIVE DEFAULTS — flag for user confirmation (see RUN_REPORT.md)
+  leverage: 1              # 1x = minimal risk; do not raise without explicit ask
+  position_size_usdt: 20   # small notional, testnet-safe
+  sl_percent: 2.0          # stop loss %
+  tp_percent: 4.0          # take profit %
+  symbols_allowed:
+    - BTCUSDT
+    - ETHUSDT
+    - SOLUSDT
+    - BNBUSDT
+    - XRPUSDT
