@@ -1,0 +1,58 @@
+# =====================================================================
+# Trading bot — 3 services, architecture kept separate (CLAUDE.md).
+# .env files are MOUNTED via env_file, NEVER baked into the image.
+# All writable runtime files (state, log, history, KILL_SWITCH) live in
+# /app/runtime, shared via one volume — nothing shadows the code.
+#
+# Run:   docker compose up -d --build
+# =====================================================================
+services:
+  # --- Signal generator (research side, NEVER trades) ---
+  # Loops every SCAN_INTERVAL seconds (replaces the systemd timer).
+  signal:
+    build: .
+    image: trading-bot
+    container_name: tb-signal
+    restart: unless-stopped
+    env_file:
+      - vibe-trading/.env
+    environment:
+      - SCAN_INTERVAL=300
+      - SCAN_ARGS=--provider scan --min-quote-volume 0 --top-n 20 --max-picks 10
+    volumes:
+      - signals:/app/signals
+    entrypoint: ["/bin/bash", "-lc"]
+    command:
+      - 'echo "[signal] starting, interval=$${SCAN_INTERVAL}s"; while true; do ./vibe-trading/generate_signal.sh $${SCAN_ARGS} || echo "[signal] run failed"; sleep $${SCAN_INTERVAL}; done'
+
+  # --- Executor (the ONLY service that trades; testnet enforced) ---
+  executor:
+    image: trading-bot
+    container_name: tb-executor
+    restart: unless-stopped
+    env_file:
+      - executor/.env
+    volumes:
+      - signals:/app/signals
+      - runtime:/app/runtime
+    command: ["python", "executor/executor.py"]
+
+  # --- Dashboard (read-only; published to host 127.0.0.1 only) ---
+  dashboard:
+    image: trading-bot
+    container_name: tb-dashboard
+    restart: unless-stopped
+    env_file:
+      - dashboard/.env
+    volumes:
+      - signals:/app/signals:ro
+      - runtime:/app/runtime        # rw, but app only writes runtime/KILL_SWITCH
+    # Container listens on 0.0.0.0 but Docker publishes ONLY to host loopback
+    # (127.0.0.1:8080) — never public. Access via SSH tunnel, per CLAUDE.md.
+    ports:
+      - "127.0.0.1:8080:8080"
+    command: ["uvicorn", "dashboard.app:app", "--host", "0.0.0.0", "--port", "8080"]
+
+volumes:
+  signals:
+  runtime:

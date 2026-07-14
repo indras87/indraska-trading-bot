@@ -6,10 +6,13 @@
 **/.env.*
 !**/.env.example
 
-# ===== Runtime state =====
+# ===== Runtime state (all writable files live here; shared volume in docker) =====
+runtime/*
+!runtime/.gitkeep
 executor/state.json
 executor/state.tmp
 executor/orders_history.jsonl
+executor/executor.log
 KILL_SWITCH
 **/KILL_SWITCH
 signals/latest_signal.json

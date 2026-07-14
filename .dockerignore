@@ -1,0 +1,26 @@
+# Never bake secrets or runtime state into the image.
+**/.env
+.env
+.env.*
+!**/.env.example
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Runtime state / logs (mounted as volumes at runtime instead).
+executor/state.json
+executor/orders_history.jsonl
+executor/executor.log
+KILL_SWITCH
+signals/*.json
+signals/*.tmp
+
+# Git / docs / editor.
+.git/
+.gitignore
+*.md
+!README.md
+.idea/
+.vscode/

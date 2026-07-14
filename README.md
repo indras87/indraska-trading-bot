@@ -314,6 +314,44 @@ ssh -L 8080:127.0.0.1:8080 user@vps   # di laptop, lalu buka http://127.0.0.1:80
 
 ---
 
+## Docker (alternatif deploy)
+
+3 service terpisah (arsitektur tetap dipisah), 1 image, `.env` di-mount (tidak dibaked). Semua file writable (state, log, history, KILL_SWITCH) di `/app/runtime`, di-share via 1 volume.
+
+```bash
+# Pastikan 3 file .env sudah terisi (executor, dashboard, vibe-trading) — di terminal, bukan di chat.
+docker compose up -d --build
+
+# Cek
+docker compose ps
+docker compose logs -f executor
+docker compose logs -f signal
+
+# Akses dashboard (publish 127.0.0.1:8080, bukan publik)
+curl http://127.0.0.1:8080/api/status
+# SSH tunnel dari laptop: ssh -L 8080:127.0.0.1:8080 user@vps
+
+# Stop + bersihkan volume
+docker compose down -v
+```
+
+| Service | Container | Fungsi | Volume |
+|---|---|---|---|
+| `signal` | tb-signal | loop scan tiap `SCAN_INTERVAL` (default 300s), tulis sinyal | `signals` (rw) |
+| `executor` | tb-executor | baca sinyal → risk_guard → order testnet | `signals` (rw), `runtime` (rw) |
+| `dashboard` | tb-dashboard | UI read-only, kill switch toggle | `signals` (ro), `runtime` (rw, hanya tulis KILL_SWITCH) |
+
+Keamanan:
+- `.env` hanya di-mount via `env_file`, **tidak pernah** di-baked ke image (lihat `.dockerignore`).
+- Dashboard publish **`127.0.0.1:8080`** saja (loopback host), bukan `0.0.0.0` — akses lewat SSH tunnel.
+- Executor tetap `BINANCE_TESTNET=true` (dipaksa di kode).
+
+Variabel compose (override di `docker-compose.yml` atau `.env`):
+- `SCAN_INTERVAL` — jeda scan detik (default 300).
+- `SCAN_ARGS` — argumen scan (default: scan semua coin, top-20, max 10 picks).
+
+---
+
 ## Cara test aplikasi
 
 ### Unit test `risk_guard.py`

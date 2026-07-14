@@ -130,8 +130,9 @@ def save_state(config: Dict[str, Any], state: Dict[str, Any]) -> None:
 
 def append_order_history(config: Dict[str, Any], result: Dict[str, Any]) -> None:
     """Append a filled-order record (one JSON per line) for dashboard history."""
-    hist_path = EXECUTOR_DIR / "orders_history.jsonl"
+    hist_path = REPO_ROOT / "runtime" / "orders_history.jsonl"
     try:
+        hist_path.parent.mkdir(parents=True, exist_ok=True)
         with open(hist_path, "a") as f:
             f.write(json.dumps(result) + "\n")
     except OSError as e:

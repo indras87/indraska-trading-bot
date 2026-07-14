@@ -31,13 +31,13 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 
 SIGNAL_FILE = REPO_ROOT / "signals" / "latest_signal.json"
 SCAN_FILE = REPO_ROOT / "signals" / "last_scan.json"
-STATE_FILE = EXECUTOR_DIR / "state.json"
-EXECUTOR_LOG = EXECUTOR_DIR / "executor.log"
-ORDERS_HISTORY = EXECUTOR_DIR / "orders_history.jsonl"
+STATE_FILE = REPO_ROOT / "runtime" / "state.json"
+EXECUTOR_LOG = REPO_ROOT / "runtime" / "executor.log"
+ORDERS_HISTORY = REPO_ROOT / "runtime" / "orders_history.jsonl"
 KLINES_URL = os.environ.get(
     "SCANNER_BASE_URL", "https://fapi.binance.com"
 ) + "/fapi/v1/klines"
-DEFAULT_KILL_SWITCH = REPO_ROOT / "KILL_SWITCH"
+DEFAULT_KILL_SWITCH = REPO_ROOT / "runtime" / "KILL_SWITCH"
 KILL_SWITCH_PATH = Path(
     os.environ.get("KILL_SWITCH_FILE", str(DEFAULT_KILL_SWITCH))
 )

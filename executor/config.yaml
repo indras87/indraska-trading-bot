@@ -13,8 +13,8 @@ binance:
 executor:
   poll_interval_seconds: 30
   signal_file: signals/latest_signal.json
-  state_file: executor/state.json
-  log_file: executor/executor.log
+  state_file: runtime/state.json
+  log_file: runtime/executor.log
   # Max signals acted on per scan batch. Each = one position. Caps concurrent
   # exposure (position_size_usdt x N). Raise/lower to taste.
   max_signals_per_run: 10
@@ -23,14 +23,14 @@ risk_guard:
   min_confidence: 0.60
   max_signal_age_seconds: 300
   max_daily_trades: 10
-  kill_switch_file: KILL_SWITCH
+  kill_switch_file: runtime/KILL_SWITCH   # cwd-relative; shared volume in docker
   allowed_actions:
     - BUY
     - SELL
 
 trading:
   # CONSERVATIVE DEFAULTS — flag for user confirmation (see RUN_REPORT.md)
-  leverage: 1              # 1x = minimal risk; do not raise without explicit ask
+  leverage: 10             # set to 10 per explicit user request (2026-07-14)
   # 60 USDT = above Binance Futures MIN_NOTIONAL floor (BTCUSDT=50). Not a risk
   # increase — it is the exchange's hard minimum to place any order. Lower only
   # if trading symbols with a smaller min notional (ETH=20, SOL/BNB/XRP=5).
