@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Trading Bot Dashboard</title>
+<style>
+  :root {
+    --bg:#0d1117; --panel:#161b22; --border:#30363d; --text:#c9d1d9;
+    --muted:#8b949e; --green:#3fb950; --red:#f85149; --yellow:#d29922; --blue:#58a6ff;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font:14px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
+  header { padding:16px 24px; border-bottom:1px solid var(--border);
+           display:flex; justify-content:space-between; align-items:center; }
+  header h1 { font-size:18px; margin:0; }
+  main { max-width:980px; margin:0 auto; padding:24px 16px; }
+  .grid { display:grid; gap:16px; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); }
+  .card { background:var(--panel); border:1px solid var(--border);
+          border-radius:8px; padding:16px; }
+  .card h2 { font-size:13px; text-transform:uppercase; letter-spacing:.06em;
+             color:var(--muted); margin:0 0 12px; }
+  .row { display:flex; justify-content:space-between; padding:4px 0; }
+  .row span:first-child { color:var(--muted); }
+  .pill { display:inline-block; padding:2px 10px; border-radius:999px; font-size:12px; font-weight:600; }
+  .pill.green { background:rgba(63,185,80,.15); color:var(--green); }
+  .pill.red   { background:rgba(248,81,73,.15); color:var(--red); }
+  .pill.yellow{ background:rgba(210,153,34,.15); color:var(--yellow); }
+  .btn { background:#21262d; color:var(--text); border:1px solid var(--border);
+         padding:8px 14px; border-radius:6px; cursor:pointer; font-size:13px; }
+  .btn:hover { background:#30363d; }
+  .btn.danger { border-color:var(--red); color:var(--red); }
+  input[type=password] { background:#010409; border:1px solid var(--border);
+         color:var(--text); padding:8px; border-radius:6px; width:100%; }
+  code, pre { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  pre { background:#010409; border:1px solid var(--border); border-radius:6px;
+        padding:10px; overflow:auto; font-size:12px; }
+  .muted { color:var(--muted); }
+  .footer { text-align:center; color:var(--muted); font-size:12px; padding:24px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Trading Bot Dashboard</h1>
+  <span id="live" class="pill yellow">connecting…</span>
+</header>
+<main>
+  <div class="grid">
+    <div class="card">
+      <h2>Kill Switch</h2>
+      <div class="row"><span>Status</span><span id="ks-status">—</span></div>
+      <div style="margin-top:12px">
+        <input id="token" type="password" placeholder="DASHBOARD_TOKEN" />
+      </div>
+      <div style="margin-top:10px; display:flex; gap:8px;">
+        <button class="btn danger" onclick="toggleKs(true)">ENABLE (halt trading)</button>
+        <button class="btn" onclick="toggleKs(false)">DISABLE (resume)</button>
+      </div>
+      <p class="muted" style="font-size:12px;margin:10px 0 0">
+        Token required for every toggle. Read-only otherwise.</p>
+    </div>
+
+    <div class="card">
+      <h2>Latest Signal</h2>
+      <div id="signal"><span class="muted">none yet</span></div>
+    </div>
+
+    <div class="card">
+      <h2>Last Order</h2>
+      <div id="order"><span class="muted">none yet</span></div>
+    </div>
+
+    <div class="card">
+      <h2>Executor State</h2>
+      <div id="state"><span class="muted">—</span></div>
+    </div>
+
+    <div class="card" style="grid-column:1/-1">
+      <h2>Binance Positions (read-only)</h2>
+      <pre id="binance"><span class="muted">no read-only key configured</span></pre>
+    </div>
+  </div>
+  <div class="footer">localhost-only · read-only except kill switch · poll every 3s</div>
+</main>
+
+<script>
+const API = "/api/status";
+function el(id){ return document.getElementById(id); }
+function esc(s){ return String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+
+async function poll(){
+  try{
+    const r = await fetch(API, {cache:"no-store"});
+    const d = await r.json();
+    el("live").textContent = "live";
+    el("live").className = "pill green";
+
+    el("ks-status").innerHTML = d.kill_switch_active
+      ? '<span class="pill red">ACTIVE (trading blocked)</span>'
+      : '<span class="pill green">inactive (trading live)</span>';
+
+    if(d.signal){
+      const s = d.signal;
+      el("signal").innerHTML =
+        `<div class="row"><span>symbol</span><b>${esc(s.symbol)}</b></div>
+         <div class="row"><span>action</span><b>${esc(s.action)}</b></div>
+         <div class="row"><span>confidence</span>${esc(s.confidence)}</div>
+         <div class="row"><span>run_id</span><code>${esc(s.run_id)}</code></div>
+         <div class="row"><span>age</span>${esc(s.generated_at)}</div>
+         <div class="muted" style="margin-top:6px">${esc(s.reason||"")}</div>`;
+    }
+
+    if(d.last_order){
+      const o = d.last_order;
+      el("order").innerHTML =
+        `<div class="row"><span>symbol</span><b>${esc(o.symbol)}</b></div>
+         <div class="row"><span>side</span>${esc(o.side)}</div>
+         <div class="row"><span>qty</span>${esc(o.quantity)}</div>
+         <div class="row"><span>entry</span>${esc(o.entry_price)}</div>
+         <div class="row"><span>SL</span>${esc(o.sl_price)}</div>
+         <div class="row"><span>TP</span>${esc(o.tp_price)}</div>
+         <div class="row"><span>entry id</span><code>${esc(o.entry_order_id)}</code></div>
+         <div class="row"><span>SL id</span><code>${esc(o.sl_order_id)}</code></div>
+         <div class="row"><span>TP id</span><code>${esc(o.tp_order_id)}</code></div>
+         <div class="row"><span>time</span>${esc(o.executed_at||"")}</div>`;
+    }
+
+    if(d.state){
+      el("state").innerHTML =
+        `<div class="row"><span>trades today</span>${esc(d.state.trades_today||0)}</div>
+         <div class="row"><span>date</span>${esc(d.state.trades_date||"")}</div>
+         <div class="row"><span>processed</span>${esc((d.state.processed_run_ids||[]).length)}</div>`;
+    }
+
+    el("binance").textContent = d.binance && d.binance.available
+      ? JSON.stringify(d.binance.positions||[], null, 2)
+      : (d.binance ? d.binance.reason : "no read-only key configured");
+  }catch(e){
+    el("live").textContent = "offline";
+    el("live").className = "pill red";
+  }
+}
+
+async function toggleKs(enable){
+  const token = el("token").value;
+  if(!token){ alert("Enter DASHBOARD_TOKEN first"); return; }
+  const r = await fetch(`/api/killswitch?enable=${enable}`, {
+    method:"POST",
+    headers:{"X-Dashboard-Token": token}
+  });
+  if(r.status===401){ alert("Invalid token"); }
+  const d = await r.json().catch(()=>({}));
+  poll();
+}
+
+poll();
+setInterval(poll, 3000);
+</script>
+</body>
+</html>
