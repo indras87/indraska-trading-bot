@@ -7,6 +7,8 @@
 !**/.env.example
 
 # ===== Runtime state =====
+executor/state.json
+executor/state.tmp
 KILL_SWITCH
 **/KILL_SWITCH
 signals/latest_signal.json
