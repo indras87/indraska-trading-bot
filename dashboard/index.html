@@ -1,305 +1,1012 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Trading Bot Dashboard</title>
+<title>TBOT Cockpit</title>
 <style>
+  /* ============================================================
+     Design system: Modern Dark Cinema.
+     Deep slate base, glassmorphism panels, ambient glow.
+     One accent (amber/gold = trust), semantic bull/bear.
+     Radius scale: 14px cards / 10px inputs / pill buttons. Locked.
+     ============================================================ */
   :root {
-    --bg:#0d1117; --panel:#161b22; --border:#30363d; --text:#c9d1d9;
-    --muted:#8b949e; --green:#3fb950; --red:#f85149; --yellow:#d29922; --blue:#58a6ff;
+    --bg: #0b1120;
+    --bg-2: #0f172a;
+    --panel: rgba(23, 32, 52, 0.66);
+    --panel-solid: #131c30;
+    --panel-hi: #182238;
+    --border: rgba(148, 163, 184, 0.13);
+    --border-hi: rgba(148, 163, 184, 0.26);
+    --text: #f1f5f9;
+    --text-dim: #aab8cc;
+    --muted: #64748b;
+
+    --accent: #f59e0b;            /* amber, single page accent (trust) */
+    --accent-2: #fbbf24;
+    --accent-soft: rgba(245, 158, 11, 0.14);
+    --accent-line: rgba(245, 158, 11, 0.40);
+
+    --bull: #2dd4bf;              /* teal-green bullish */
+    --bull-soft: rgba(45, 212, 191, 0.14);
+    --bear: #f43f5e;             /* rose-red bearish */
+    --bear-soft: rgba(244, 63, 94, 0.14);
+    --info: #60a5fa;
+    --info-soft: rgba(96, 165, 250, 0.14);
+    --warn: #fbbf24;
+    --warn-soft: rgba(251, 191, 36, 0.14);
+
+    --radius: 14px;
+    --radius-sm: 10px;
+    --shadow: 0 22px 60px -28px rgba(0, 0, 0, 0.8);
+    --shadow-amber: 0 14px 40px -16px rgba(245, 158, 11, 0.28);
+
+    --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
   }
+
   * { box-sizing: border-box; }
-  body { margin:0; background:var(--bg); color:var(--text);
-         font:14px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
-  header { padding:16px 24px; border-bottom:1px solid var(--border);
-           display:flex; justify-content:space-between; align-items:center; }
-  header h1 { font-size:18px; margin:0; }
-  main { max-width:980px; margin:0 auto; padding:24px 16px; }
-  .grid { display:grid; gap:16px; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); }
-  .card { background:var(--panel); border:1px solid var(--border);
-          border-radius:8px; padding:16px; }
-  .card h2 { font-size:13px; text-transform:uppercase; letter-spacing:.06em;
-             color:var(--muted); margin:0 0 12px; }
-  .row { display:flex; justify-content:space-between; padding:4px 0; }
-  .row span:first-child { color:var(--muted); }
-  .pill { display:inline-block; padding:2px 10px; border-radius:999px; font-size:12px; font-weight:600; }
-  .pill.green { background:rgba(63,185,80,.15); color:var(--green); }
-  .pill.red   { background:rgba(248,81,73,.15); color:var(--red); }
-  .pill.yellow{ background:rgba(210,153,34,.15); color:var(--yellow); }
-  .btn { background:#21262d; color:var(--text); border:1px solid var(--border);
-         padding:8px 14px; border-radius:6px; cursor:pointer; font-size:13px; }
-  .btn:hover { background:#30363d; }
-  .btn.danger { border-color:var(--red); color:var(--red); }
-  input[type=password] { background:#010409; border:1px solid var(--border);
-         color:var(--text); padding:8px; border-radius:6px; width:100%; }
-  code, pre { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
-  pre { background:#010409; border:1px solid var(--border); border-radius:6px;
-        padding:10px; overflow:auto; font-size:12px; }
-  .muted { color:var(--muted); }
-  .footer { text-align:center; color:var(--muted); font-size:12px; padding:24px 0; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; color: var(--text); font: 14px/1.5 var(--font-sans);
+    background: var(--bg);
+    background-image:
+      radial-gradient(1100px 560px at 8% -10%, rgba(245, 158, 11, 0.10), transparent 58%),
+      radial-gradient(900px 520px at 105% 5%, rgba(96, 165, 250, 0.08), transparent 55%),
+      radial-gradient(900px 700px at 50% 115%, rgba(45, 212, 191, 0.06), transparent 60%);
+    background-attachment: fixed;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .mono, code, pre, .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+  /* ===================== Ambient blobs (cinema). ===================== */
+  .blob { position: fixed; z-index: 0; border-radius: 50%; filter: blur(90px); opacity: 0.5; pointer-events: none; }
+  .blob.a { width: 380px; height: 380px; top: -120px; left: -80px; background: rgba(245,158,11,0.18); animation: drift1 22s ease-in-out infinite; }
+  .blob.b { width: 420px; height: 420px; bottom: -160px; right: -120px; background: rgba(96,165,250,0.16); animation: drift2 28s ease-in-out infinite; }
+  @keyframes drift1 { 0%,100%{transform:translate(0,0)} 50%{transform:translate(40px,30px)} }
+  @keyframes drift2 { 0%,100%{transform:translate(0,0)} 50%{transform:translate(-30px,-40px)} }
+
+  /* ===================== Top bar. Glass, sticky, < 80px. ===================== */
+  .topbar {
+    position: sticky; top: 0; z-index: 50;
+    display: flex; align-items: center; gap: 16px;
+    padding: 12px 22px;
+    background: rgba(11, 17, 32, 0.72);
+    backdrop-filter: blur(20px) saturate(150%);
+    -webkit-backdrop-filter: blur(20px) saturate(150%);
+    border-bottom: 1px solid var(--border);
+  }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .mark {
+    width: 36px; height: 36px; border-radius: 11px;
+    background: linear-gradient(140deg, #f59e0b, #b45309 75%);
+    display: grid; place-items: center;
+    font-weight: 800; color: #1a1206; font-size: 14px; letter-spacing: .02em;
+    box-shadow: var(--shadow-amber);
+  }
+  .brand .name { font-weight: 700; font-size: 15px; letter-spacing: .01em; }
+  .brand .sub { font-size: 11px; color: var(--muted); margin-top: 1px; }
+  .spacer { flex: 1; }
+  .clock { font-family: var(--font-mono); font-size: 13px; color: var(--text-dim); }
+  .clock .lbl { color: var(--muted); margin-right: 6px; }
+
+  /* Pills. */
+  .pill {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 5px 11px; border-radius: 999px; font-size: 12px; font-weight: 600;
+    border: 1px solid transparent; white-space: nowrap;
+  }
+  .pill .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .pill.live  { color: var(--bull); background: var(--bull-soft); }
+  .pill.off   { color: var(--bear); background: var(--bear-soft); }
+  .pill.warn  { color: var(--warn); background: var(--warn-soft); }
+  .pill.info  { color: var(--info); background: var(--info-soft); }
+  .pill.amber { color: var(--accent); background: var(--accent-soft); }
+  .pill.muted { color: var(--muted); background: rgba(148,163,184,0.08); }
+  .pill.live .dot { animation: pulse 1.8s ease-in-out infinite; }
+  @keyframes pulse {
+    0%,100% { box-shadow: 0 0 0 0 rgba(45,212,191,0.5); }
+    50%     { box-shadow: 0 0 0 6px rgba(45,212,191,0); }
+  }
+
+  /* ===================== Layout ===================== */
+  main { position: relative; z-index: 1; max-width: 1380px; margin: 0 auto; padding: 22px 22px 60px; }
+
+  .kpi-row { display: grid; gap: 14px; grid-template-columns: repeat(4, 1fr); margin-bottom: 18px; }
+  .grid-main { display: grid; gap: 16px; grid-template-columns: 2fr 1fr; margin-bottom: 18px; }
+  .stack { display: grid; gap: 16px; align-content: start; }
+  .full { grid-column: 1 / -1; }
+
+  /* Card. Glass. */
+  .card {
+    position: relative;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 18px;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    box-shadow: var(--shadow);
+    transition: border-color .25s ease, transform .25s ease;
+  }
+  .card:hover { border-color: var(--border-hi); }
+  .card.lift:hover { transform: translateY(-2px); }
+
+  .card-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+  .card-head h2 {
+    margin: 0; font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .14em; color: var(--text-dim);
+  }
+  .card-head .tag { font-size: 11px; color: var(--muted); font-family: var(--font-mono); }
+
+  /* KPI tiles. */
+  .kpi { padding: 14px 16px; }
+  .kpi .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); }
+  .kpi .val { font-family: var(--font-mono); font-size: 26px; font-weight: 700; margin-top: 6px; letter-spacing: -.01em; }
+  .kpi .sub { font-size: 12px; color: var(--text-dim); margin-top: 4px; }
+  .kpi .ico {
+    position: absolute; top: 14px; right: 14px;
+    width: 32px; height: 32px; border-radius: 10px;
+    display: grid; place-items: center;
+    background: rgba(148,163,184,0.07); color: var(--text-dim);
+  }
+  .kpi.amber .ico { background: var(--accent-soft); color: var(--accent); }
+  .kpi.bull  .ico { background: var(--bull-soft);  color: var(--bull); }
+  .kpi.bear  .ico { background: var(--bear-soft);  color: var(--bear); }
+
+  /* KV rows. Sparse divider (one border). */
+  .kv { display: flex; justify-content: space-between; align-items: center; padding: 7px 0; }
+  .kv + .kv { border-top: 1px solid var(--border); }
+  .kv .k { color: var(--muted); font-size: 13px; }
+  .kv .v { font-weight: 600; }
+  .kv .v.num { font-family: var(--font-mono); }
+
+  /* Signal mini-cards. */
+  .sig {
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    padding: 10px 12px; margin-bottom: 8px; background: rgba(11,17,32,0.45);
+    transition: border-color .2s ease;
+  }
+  .sig:hover { border-color: var(--border-hi); }
+  .sig:last-child { margin-bottom: 0; }
+  .sig .reason { color: var(--text-dim); font-size: 12px; margin-top: 6px; line-height: 1.45; }
+
+  /* Inputs. Visible label, focus ring. */
+  input[type=password], input[type=text], select {
+    width: 100%; background: rgba(11,17,32,0.6);
+    border: 1px solid var(--border); color: var(--text);
+    padding: 10px 12px; border-radius: var(--radius-sm); font-size: 13px;
+    font-family: var(--font-sans); outline: none;
+    transition: border-color .2s ease, box-shadow .2s ease;
+  }
+  input:focus, select:focus {
+    border-color: var(--accent-line);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  .field { display: grid; gap: 6px; }
+  .field label { font-size: 11px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); font-weight: 600; }
+
+  /* Buttons. Pill, contrast checked. */
+  .btn {
+    appearance: none; cursor: pointer; user-select: none;
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    padding: 10px 16px; border-radius: 999px; font-size: 13px; font-weight: 600;
+    border: 1px solid var(--border-hi); color: var(--text);
+    background: rgba(148,163,184,0.06);
+    transition: background .2s ease, border-color .2s ease, transform .1s ease;
+    min-height: 40px;
+  }
+  .btn:hover { background: rgba(148,163,184,0.12); }
+  .btn:active { transform: translateY(1px) scale(.985); }
+  .btn:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
+  .btn.primary { background: linear-gradient(140deg, var(--accent), #d97706); color: #1a1206; border-color: transparent; }
+  .btn.primary:hover { filter: brightness(1.08); }
+  .btn.danger { color: var(--bear); border-color: rgba(244,63,94,0.4); background: var(--bear-soft); }
+  .btn.danger:hover { background: rgba(244,63,94,0.22); }
+  .btn.ghost { background: transparent; }
+  .btn[disabled] { opacity: .5; cursor: not-allowed; }
+  .row-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+
+  /* Segmented tabs. */
+  .seg { display: inline-flex; gap: 4px; padding: 4px; background: rgba(11,17,32,0.55); border-radius: 999px; border: 1px solid var(--border); }
+  .seg button {
+    appearance: none; cursor: pointer; border: 0; background: transparent;
+    color: var(--text-dim); font-size: 12px; font-weight: 600; font-family: var(--font-mono);
+    padding: 7px 13px; border-radius: 999px; transition: all .2s ease; min-height: 30px;
+  }
+  .seg button.active { background: linear-gradient(140deg, var(--accent), #d97706); color: #1a1206; }
+  .seg button:not(.active):hover { color: var(--text); }
+
+  /* Chart. */
+  .chart-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+  .chart-bar .sym { width: 130px; }
+  .chart-info { font-size: 12px; color: var(--muted); font-family: var(--font-mono); }
+  .chart-wrap { position: relative; background: rgba(11,17,32,0.5); border-radius: var(--radius-sm); border: 1px solid var(--border); overflow: hidden; }
+  #chart { display: block; width: 100%; height: 360px; }
+  .tip {
+    position: absolute; pointer-events: none; z-index: 5;
+    background: rgba(11,17,32,0.96); border: 1px solid var(--border-hi);
+    border-radius: 8px; padding: 7px 10px; font-family: var(--font-mono); font-size: 11px;
+    color: var(--text); white-space: nowrap; opacity: 0; transition: opacity .12s ease;
+    box-shadow: 0 10px 28px -10px rgba(0,0,0,0.7);
+  }
+
+  /* Tables. Dense, mono numbers, hover row, sparse dividers, sortable cue. */
+  .tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .tbl th {
+    text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .1em;
+    color: var(--muted); font-weight: 600; padding: 9px 10px; border-bottom: 1px solid var(--border);
+  }
+  .tbl td { padding: 9px 10px; border-bottom: 1px solid var(--border); }
+  .tbl tr:last-child td { border-bottom: 0; }
+  .tbl tbody tr { transition: background .15s ease; }
+  .tbl tbody tr:hover { background: rgba(148,163,184,0.05); }
+  .tbl td.num, .tbl th.num { font-family: var(--font-mono); }
+  .pos { color: var(--bull); }
+  .neg { color: var(--bear); }
+
+  pre.logbox {
+    margin: 10px 0 0; background: rgba(11,17,32,0.6); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); padding: 10px 12px; overflow: auto;
+    font-size: 12px; line-height: 1.55; color: var(--text-dim); max-height: 220px;
+  }
+
+  details summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+  details summary:hover { color: var(--text-dim); }
+  .empty { color: var(--muted); font-size: 13px; padding: 6px 0; }
+  .footer { text-align: center; color: var(--muted); font-size: 12px; padding: 26px 0 10px; }
+
+  /* Toasts. aria-live polite, auto-dismiss. */
+  .toasts { position: fixed; bottom: 22px; right: 22px; z-index: 80; display: grid; gap: 10px; }
+  .toast {
+    min-width: 240px; max-width: 360px; padding: 12px 14px; border-radius: var(--radius-sm);
+    background: var(--panel-solid); border: 1px solid var(--border-hi); box-shadow: var(--shadow);
+    font-size: 13px; display: flex; gap: 10px; align-items: flex-start;
+    transform: translateX(120%); opacity: 0; transition: transform .35s cubic-bezier(.16,1,.3,1), opacity .35s ease;
+  }
+  .toast.show { transform: translateX(0); opacity: 1; }
+  .toast.ok  { border-left: 3px solid var(--bull); }
+  .toast.err { border-left: 3px solid var(--bear); }
+  .toast .ico { width: 18px; height: 18px; flex: none; margin-top: 1px; }
+
+  /* Skeleton shimmer. */
+  .skel { position: relative; overflow: hidden; background: rgba(148,163,184,0.06); border-radius: 6px; height: 14px; }
+  .skel::after {
+    content: ""; position: absolute; inset: 0; transform: translateX(-100%);
+    background: linear-gradient(90deg, transparent, rgba(148,163,184,0.14), transparent);
+    animation: shimmer 1.5s infinite;
+  }
+  @keyframes shimmer { 100% { transform: translateX(100%); } }
+
+  .reveal { opacity: 0; transform: translateY(10px); transition: opacity .5s ease, transform .5s ease; }
+  .reveal.in { opacity: 1; transform: none; }
+
+  /* Responsive. Explicit per-section collapse. */
+  @media (max-width: 1024px) {
+    .grid-main { grid-template-columns: 1fr; }
+    .kpi-row { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 600px) {
+    .kpi-row { grid-template-columns: 1fr; }
+    .topbar { flex-wrap: wrap; gap: 10px; }
+    .clock { display: none; }
+  }
+
+  /* Reduced motion. Mandatory. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: .001ms !important; animation-iteration-count: 1 !important;
+      transition-duration: .001ms !important;
+    }
+    .blob { animation: none; }
+    .pill.live .dot, .skel::after { animation: none; }
+  }
+
+  svg.ic { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  svg.ic.sm { width: 13px; height: 13px; }
 </style>
 </head>
 <body>
-<header>
-  <h1>Trading Bot Dashboard</h1>
-  <span id="live" class="pill yellow">connecting…</span>
-</header>
-<main>
-  <div class="grid">
-    <div class="card">
-      <h2>Kill Switch</h2>
-      <div class="row"><span>Status</span><span id="ks-status">—</span></div>
-      <div style="margin-top:12px">
-        <input id="token" type="password" placeholder="DASHBOARD_TOKEN" />
-      </div>
-      <div style="margin-top:10px; display:flex; gap:8px;">
-        <button class="btn danger" onclick="toggleKs(true)">ENABLE (halt trading)</button>
-        <button class="btn" onclick="toggleKs(false)">DISABLE (resume)</button>
-      </div>
-      <p class="muted" style="font-size:12px;margin:10px 0 0">
-        Token required for every toggle. Read-only otherwise.</p>
-    </div>
 
-    <div class="card">
-      <h2>Latest Signal</h2>
-      <div id="signal"><span class="muted">none yet</span></div>
-    </div>
+<div class="blob a" aria-hidden="true"></div>
+<div class="blob b" aria-hidden="true"></div>
 
-    <div class="card">
-      <h2>Last Order</h2>
-      <div id="order"><span class="muted">none yet</span></div>
-    </div>
-
-    <div class="card">
-      <h2>Executor State</h2>
-      <div id="state"><span class="muted">—</span></div>
-    </div>
-
-    <div class="card" style="grid-column:1/-1">
-      <h2>Executor Status</h2>
-      <div id="exec-status"><span class="muted">—</span></div>
-    </div>
-
-    <div class="card" style="grid-column:1/-1">
-      <h2>Price Chart (read-only public data)</h2>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
-        <input id="chart-symbol" value="BTCUSDT" style="width:120px;background:#010409;border:1px solid var(--border);color:var(--text);padding:6px;border-radius:6px" />
-        <select id="chart-interval" style="background:#010409;border:1px solid var(--border);color:var(--text);padding:6px;border-radius:6px">
-          <option>15m</option><option selected>1h</option><option>4h</option><option>1d</option>
-        </select>
-        <button class="btn" onclick="loadChart()">Load</button>
-        <span id="chart-info" class="muted" style="font-size:12px"></span>
-      </div>
-      <canvas id="chart" width="900" height="320" style="width:100%;background:#010409;border:1px solid var(--border);border-radius:6px"></canvas>
-    </div>
-
-    <div class="card" style="grid-column:1/-1">
-      <h2>Binance Positions (read-only)</h2>
-      <div id="binance"><span class="muted">no read-only key configured</span></div>
-    </div>
-
-    <div class="card" style="grid-column:1/-1">
-      <h2>Scan Process (read-only)</h2>
-      <div id="scan"><span class="muted">no scan yet</span></div>
-    </div>
-
-    <div class="card" style="grid-column:1/-1">
-      <h2>Orders History (last 20)</h2>
-      <div id="history"><span class="muted">none yet</span></div>
+<!-- ===================== TOP BAR ===================== -->
+<header class="topbar">
+  <div class="brand">
+    <div class="mark">TB</div>
+    <div>
+      <div class="name">TBOT Cockpit</div>
+      <div class="sub">Futures monitor · localhost-only</div>
     </div>
   </div>
-  <div class="footer">localhost-only · read-only except kill switch · poll every 3s</div>
+  <div class="spacer"></div>
+  <div class="clock"><span class="lbl">UTC</span><span id="clock">--:--:--</span></div>
+  <span id="live" class="pill warn"><span class="dot"></span>connecting</span>
+</header>
+
+<main>
+  <!-- ===================== KPI ROW ===================== -->
+  <section class="kpi-row" aria-label="Key indicators">
+    <div class="card kpi reveal">
+      <div class="lbl">Connection</div>
+      <div class="val" id="kpi-conn" style="font-size:18px;margin-top:8px">—</div>
+      <div class="sub" id="kpi-conn-sub">waiting</div>
+      <div class="ico">
+        <svg class="ic" viewBox="0 0 24 24"><path d="M5 12.5a10 10 0 0 1 14 0"/><path d="M8.5 16a5 5 0 0 1 7 0"/><circle cx="12" cy="19" r="1"/></svg>
+      </div>
+    </div>
+
+    <div class="card kpi amber reveal">
+      <div class="lbl">Kill Switch</div>
+      <div class="val" id="kpi-ks" style="font-size:18px;margin-top:8px">—</div>
+      <div class="sub" id="kpi-ks-sub">—</div>
+      <div class="ico">
+        <svg class="ic" viewBox="0 0 24 24"><path d="M12 3v9"/><path d="M6.5 6.5a8 8 0 1 0 11 0"/></svg>
+      </div>
+    </div>
+
+    <div class="card kpi bull reveal">
+      <div class="lbl">Trades Today</div>
+      <div class="val" id="kpi-trades">0</div>
+      <div class="sub" id="kpi-trades-sub">—</div>
+      <div class="ico">
+        <svg class="ic" viewBox="0 0 24 24"><path d="M3 17l6-6 4 4 7-8"/><path d="M14 7h6v6"/></svg>
+      </div>
+    </div>
+
+    <div class="card kpi reveal">
+      <div class="lbl">Signals Processed</div>
+      <div class="val" id="kpi-proc">0</div>
+      <div class="sub" id="kpi-proc-sub">executor state</div>
+      <div class="ico">
+        <svg class="ic" viewBox="0 0 24 24"><path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h10"/></svg>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== MAIN GRID ===================== -->
+  <section class="grid-main">
+    <div class="stack">
+      <div class="card lift reveal">
+        <div class="card-head">
+          <h2>Latest Signal</h2>
+          <span class="tag" id="sig-count"></span>
+          <div class="spacer"></div>
+          <span id="sig-age" class="tag"></span>
+        </div>
+        <div id="signal"><div class="skel" style="height:60px"></div></div>
+      </div>
+
+      <div class="card lift reveal">
+        <div class="card-head"><h2>Last Order</h2></div>
+        <div id="order"><div class="skel" style="height:90px"></div></div>
+      </div>
+
+      <div class="card lift reveal">
+        <div class="card-head"><h2>Executor Status</h2><div class="spacer"></div><span id="exec-tag" class="tag"></span></div>
+        <div id="exec-status"><div class="skel" style="height:50px"></div></div>
+      </div>
+    </div>
+
+    <div class="stack">
+      <div class="card lift reveal">
+        <div class="card-head"><h2>Kill Switch</h2><div class="spacer"></div><span id="ks-pill" class="pill muted">—</span></div>
+        <div class="kv"><span class="k">Status</span><span class="v" id="ks-status">—</span></div>
+        <div class="field" style="margin-top:14px">
+          <label for="token">Dashboard token</label>
+          <input id="token" name="token" type="password" placeholder="DASHBOARD_TOKEN" autocomplete="off" />
+        </div>
+        <div class="row-btns" style="margin-top:10px">
+          <button class="btn danger" onclick="toggleKs(true)" aria-label="Enable kill switch, halt trading">
+            <svg class="ic sm" viewBox="0 0 24 24"><rect x="6" y="5" width="3" height="14" rx="1"/><rect x="15" y="5" width="3" height="14" rx="1"/></svg>
+            Halt
+          </button>
+          <button class="btn primary" onclick="toggleKs(false)" aria-label="Disable kill switch, resume trading">
+            <svg class="ic sm" viewBox="0 0 24 24"><path d="M7 5l12 7-12 7z"/></svg>
+            Resume
+          </button>
+        </div>
+        <p class="empty" style="margin-top:12px">Token required for every toggle. Read-only otherwise.</p>
+      </div>
+
+      <div class="card lift reveal">
+        <div class="card-head"><h2>Executor State</h2></div>
+        <div id="state"><div class="skel" style="height:70px"></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== CHART ===================== -->
+  <div class="card reveal" style="margin-bottom:18px">
+    <div class="card-head">
+      <h2>Price Chart</h2>
+      <div class="spacer"></div>
+      <span class="tag" id="price-change">—</span>
+    </div>
+    <div class="chart-bar">
+      <div class="field" style="width:130px">
+        <label for="chart-symbol" class="sr-only" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Symbol</label>
+        <input id="chart-symbol" class="sym" value="BTCUSDT" aria-label="Trading symbol" />
+      </div>
+      <div class="seg" id="interval-tabs" role="tablist" aria-label="Interval">
+        <button data-iv="15m">15m</button>
+        <button data-iv="1h" class="active">1h</button>
+        <button data-iv="4h">4h</button>
+        <button data-iv="1d">1d</button>
+      </div>
+      <div class="seg" id="view-tabs" role="tablist" aria-label="Chart view">
+        <button data-view="candles" class="active">Candles</button>
+        <button data-view="area">Area</button>
+      </div>
+      <button class="btn primary" onclick="loadChart()" aria-label="Reload chart">
+        <svg class="ic sm" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/></svg>
+        Load
+      </button>
+      <button class="btn ghost" id="pause-btn" onclick="togglePause()" aria-pressed="false">
+        <svg class="ic sm" viewBox="0 0 24 24"><rect x="7" y="5" width="3" height="14" rx="1"/><rect x="14" y="5" width="3" height="14" rx="1"/></svg>
+        <span id="pause-lbl">Pause</span>
+      </button>
+      <span id="chart-info" class="chart-info"></span>
+    </div>
+    <div class="chart-wrap">
+      <canvas id="chart" role="img" aria-label="Price chart"></canvas>
+      <div id="tip" class="tip" role="status" aria-live="off"></div>
+    </div>
+    <details style="margin-top:10px">
+      <summary>OHLC data table (accessibility)</summary>
+      <div id="ohlc-table" style="margin-top:8px;max-height:240px;overflow:auto"></div>
+    </details>
+  </div>
+
+  <!-- ===================== POSITIONS ===================== -->
+  <div class="card reveal" style="margin-bottom:18px">
+    <div class="card-head"><h2>Binance Positions</h2><div class="spacer"></div><span class="tag" id="pos-testnet"></span></div>
+    <div id="binance"><div class="skel" style="height:40px"></div></div>
+  </div>
+
+  <!-- ===================== REALIZED PNL ===================== -->
+  <div class="card reveal" style="margin-bottom:18px">
+    <div class="card-head"><h2>Realized PnL &amp; Win Rate</h2><div class="spacer"></div><span class="tag" id="pnl-testnet"></span></div>
+    <div id="pnl"><div class="skel" style="height:80px"></div></div>
+  </div>
+
+  <!-- ===================== SCAN ===================== -->
+  <div class="card reveal" style="margin-bottom:18px">
+    <div class="card-head"><h2>Market Scan</h2><div class="spacer"></div><span class="tag" id="scan-when"></span></div>
+    <div id="scan"><div class="skel" style="height:60px"></div></div>
+  </div>
+
+  <!-- ===================== HISTORY ===================== -->
+  <div class="card reveal" style="margin-bottom:18px">
+    <div class="card-head"><h2>Orders History</h2><div class="spacer"></div><span class="tag">last 20</span></div>
+    <div id="history"><div class="skel" style="height:60px"></div></div>
+  </div>
+
+  <div class="footer">localhost-only · read-only except kill switch · poll 3s · scan 10s · chart auto 30s</div>
 </main>
+
+<div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
 
 <script>
 const API = "/api/status";
-function el(id){ return document.getElementById(id); }
-function esc(s){ return String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/* Clock. Motivated: UTC reference for trading hours. */
+function tickClock(){
+  const d = new Date(), p = n => String(n).padStart(2,"0");
+  $("clock").textContent = `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
+}
+setInterval(tickClock, 1000); tickClock();
+
+/* Toasts. */
+function toast(msg, kind="ok"){
+  const wrap = $("toasts");
+  const t = document.createElement("div");
+  t.className = `toast ${kind}`;
+  const path = kind === "ok"
+    ? "<path d='M20 6L9 17l-5-5'/>"
+    : "<path d='M12 8v5'/><path d='M12 16h.01'/><circle cx='12' cy='12' r='9'/>";
+  t.innerHTML = `<svg class='ico' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'>${path}</svg><div>${esc(msg)}</div>`;
+  wrap.appendChild(t);
+  requestAnimationFrame(() => t.classList.add("show"));
+  setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 400); }, 4000);
+}
+
+function animNum(el, target){
+  const from = parseInt(el.textContent.replace(/\D/g,"")) || 0;
+  if (reduce || from === target){ el.textContent = target; return; }
+  const start = performance.now(), dur = 500;
+  function step(now){
+    const t = Math.min(1, (now - start) / dur);
+    const eased = 1 - Math.pow(1 - t, 3);
+    el.textContent = Math.round(from + (target - from) * eased);
+    if (t < 1) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+}
+
+/* Reveal cards. Stagger 45ms. */
+function reveal(){
+  document.querySelectorAll(".reveal").forEach((el, i) => {
+    if (reduce){ el.classList.add("in"); return; }
+    setTimeout(() => el.classList.add("in"), 60 + i * 45);
+  });
+}
+reveal();
+
+/* =====================================================
+   Poll /api/status
+   ===================================================== */
+let prevSigRun = null;
 
 async function poll(){
   try{
-    const r = await fetch(API, {cache:"no-store"});
+    const r = await fetch(API, { cache: "no-store" });
     const d = await r.json();
-    el("live").textContent = "live";
-    el("live").className = "pill green";
 
-    el("ks-status").innerHTML = d.kill_switch_active
-      ? '<span class="pill red">ACTIVE (trading blocked)</span>'
-      : '<span class="pill green">inactive (trading live)</span>';
+    const live = $("live");
+    live.className = "pill live";
+    live.innerHTML = `<span class="dot"></span>live`;
+    $("kpi-conn").textContent = "Connected";
+    $("kpi-conn").style.color = "var(--bull)";
+    $("kpi-conn-sub").textContent = "polling every 3s";
 
-    if(d.signal){
-      // signal may be a single object or a list (scan mode).
+    // kill switch
+    const ks = d.kill_switch_active;
+    $("ks-status").textContent = ks ? "ACTIVE. trading blocked" : "inactive. trading live";
+    $("ks-status").style.color = ks ? "var(--bear)" : "var(--bull)";
+    $("kpi-ks").textContent = ks ? "HALTED" : "LIVE";
+    $("kpi-ks").style.color = ks ? "var(--bear)" : "var(--bull)";
+    $("kpi-ks-sub").textContent = ks ? "trading blocked" : "executor free to trade";
+    const ksPill = $("ks-pill");
+    ksPill.className = `pill ${ks ? "off" : "live"}`;
+    ksPill.innerHTML = `<span class="dot"></span>${ks ? "blocked" : "armed"}`;
+
+    // signal(s)
+    if (d.signal){
       const sigs = Array.isArray(d.signal) ? d.signal : [d.signal];
-      const rows = sigs.map(s =>
-        `<div style="border:1px solid var(--border);border-radius:6px;padding:8px;margin-bottom:6px">
-           <div class="row"><span>symbol</span><b>${esc(s.symbol)}</b></div>
-           <div class="row"><span>action</span><b>${esc(s.action)}</b></div>
-           <div class="row"><span>confidence</span>${esc(s.confidence)}</div>
-           <div class="row"><span>run_id</span><code>${esc(s.run_id)}</code></div>
-           <div class="row"><span>age</span>${esc(s.generated_at)}</div>
-           <div class="muted" style="margin-top:4px;font-size:12px">${esc(s.reason||"")}</div>
-         </div>`).join("");
-      el("signal").innerHTML =
-        `<div class="muted" style="margin-bottom:6px">${sigs.length} signal(s)</div>${rows}`;
+      $("sig-count").textContent = `${sigs.length} signal${sigs.length>1?"s":""}`;
+      const first = sigs[0];
+      $("sig-age").textContent = first?.generated_at ? `age ${esc(first.generated_at)}` : "";
+      if (first && first.run_id && first.run_id !== prevSigRun){
+        if (prevSigRun !== null) toast(`New signal: ${first.symbol} ${first.action} (${first.confidence})`, "ok");
+        prevSigRun = first.run_id;
+      }
+      $("signal").innerHTML = sigs.map(s => {
+        const act = (s.action||"").toUpperCase();
+        const actClass = act === "BUY" ? "live" : (act === "SELL" ? "off" : "info");
+        return `<div class="sig">
+          <div class="kv"><span class="k">symbol</span><b>${esc(s.symbol)}</b></div>
+          <div class="kv"><span class="k">action</span><span class="pill ${actClass}"><span class="dot"></span>${esc(s.action)}</span></div>
+          <div class="kv"><span class="k">confidence</span><span class="v num">${esc(s.confidence)}</span></div>
+          <div class="kv"><span class="k">run_id</span><code style="font-size:11px">${esc(s.run_id)}</code></div>
+          ${s.reason ? `<div class="reason">${esc(s.reason)}</div>` : ""}
+        </div>`;
+      }).join("");
+    } else {
+      $("sig-count").textContent = ""; $("sig-age").textContent = "";
+      $("signal").innerHTML = `<div class="empty">no signal yet</div>`;
     }
 
-    if(d.last_order){
+    // last order
+    if (d.last_order){
       const o = d.last_order;
-      el("order").innerHTML =
-        `<div class="row"><span>symbol</span><b>${esc(o.symbol)}</b></div>
-         <div class="row"><span>side</span>${esc(o.side)}</div>
-         <div class="row"><span>qty</span>${esc(o.quantity)}</div>
-         <div class="row"><span>entry</span>${esc(o.entry_price)}</div>
-         <div class="row"><span>SL</span>${esc(o.sl_price)}</div>
-         <div class="row"><span>TP</span>${esc(o.tp_price)}</div>
-         <div class="row"><span>entry id</span><code>${esc(o.entry_order_id)}</code></div>
-         <div class="row"><span>SL id</span><code>${esc(o.sl_order_id)}</code></div>
-         <div class="row"><span>TP id</span><code>${esc(o.tp_order_id)}</code></div>
-         <div class="row"><span>time</span>${esc(o.executed_at||"")}</div>`;
+      $("order").innerHTML = `
+        <div class="kv"><span class="k">symbol</span><b>${esc(o.symbol)}</b></div>
+        <div class="kv"><span class="k">side</span><span class="v ${o.side==='BUY'?'pos':'neg'}">${esc(o.side)}</span></div>
+        <div class="kv"><span class="k">qty</span><span class="v num">${esc(o.quantity)}</span></div>
+        <div class="kv"><span class="k">entry</span><span class="v num">${esc(o.entry_price)}</span></div>
+        <div class="kv"><span class="k">stop loss</span><span class="v num neg">${esc(o.sl_price)}</span></div>
+        <div class="kv"><span class="k">take profit</span><span class="v num pos">${esc(o.tp_price)}</span></div>
+        ${o.executed_at ? `<div class="kv"><span class="k">executed</span><span class="v num">${esc(o.executed_at)}</span></div>` : ""}
+        ${(o.entry_order_id||o.sl_order_id||o.tp_order_id) ? `<details style="margin-top:8px"><summary>order IDs</summary>
+          <div class="kv"><span class="k">entry id</span><code style="font-size:11px">${esc(o.entry_order_id||"—")}</code></div>
+          <div class="kv"><span class="k">SL id</span><code style="font-size:11px">${esc(o.sl_order_id||"—")}</code></div>
+          <div class="kv"><span class="k">TP id</span><code style="font-size:11px">${esc(o.tp_order_id||"—")}</code></div>
+        </details>` : ""}`;
+    } else {
+      $("order").innerHTML = `<div class="empty">no order yet</div>`;
     }
 
-    if(d.state){
-      el("state").innerHTML =
-        `<div class="row"><span>trades today</span>${esc(d.state.trades_today||0)}</div>
-         <div class="row"><span>date</span>${esc(d.state.trades_date||"")}</div>
-         <div class="row"><span>processed</span>${esc((d.state.processed_run_ids||[]).length)}</div>`;
+    // state KPIs
+    if (d.state){
+      const tt = d.state.trades_today || 0;
+      animNum($("kpi-trades"), tt);
+      $("kpi-trades-sub").textContent = d.state.trades_date || "today";
+      animNum($("kpi-proc"), (d.state.processed_run_ids || []).length);
+      $("state").innerHTML = `
+        <div class="kv"><span class="k">trades today</span><span class="v num">${esc(tt)}</span></div>
+        <div class="kv"><span class="k">trade date</span><span class="v num">${esc(d.state.trades_date||"—")}</span></div>
+        <div class="kv"><span class="k">processed run_ids</span><span class="v num">${esc((d.state.processed_run_ids||[]).length)}</span></div>`;
     }
 
     // executor status
-    if(d.executor && d.executor.available){
-      el("exec-status").innerHTML =
-        `<span class="pill ${d.executor.alive?'green':'red'}">${d.executor.alive?'ALIVE':'STALE/STOPPED'}</span>
-         <span class="muted" style="margin-left:8px">last log ${esc(d.executor.last_log_age_seconds)}s ago</span>
-         <pre style="margin-top:8px">${esc((d.executor.last_lines||[]).join("\n"))}</pre>`;
+    if (d.executor && d.executor.available){
+      const alive = d.executor.alive;
+      $("exec-tag").textContent = `last log ${d.executor.last_log_age_seconds}s ago`;
+      const pill = alive ? `<span class="pill live"><span class="dot"></span>alive</span>` : `<span class="pill off"><span class="dot"></span>stale</span>`;
+      $("exec-status").innerHTML = `
+        <div style="display:flex;align-items:center;gap:10px">${pill}<span class="tag">${d.executor.last_log_age_seconds}s since last log</span></div>
+        <pre class="logbox">${esc((d.executor.last_lines||[]).join("\n"))}</pre>`;
     } else {
-      el("exec-status").innerHTML = `<span class="muted">${esc(d.executor?.reason || "—")}</span>`;
+      $("exec-tag").textContent = "";
+      $("exec-status").innerHTML = `<div class="empty">${esc(d.executor?.reason || "no executor log yet")}</div>`;
     }
 
-    // positions table
-    if(d.binance && d.binance.available && (d.binance.positions||[]).length){
-      const rows = d.binance.positions.map(p=>
-        `<tr><td>${esc(p.symbol)}</td><td>${esc(p.positionAmt)}</td><td>${esc(p.entryPrice)}</td>
-         <td style="color:${parseFloat(p.unRealizedProfit)>=0?'var(--green)':'var(--red)'}">${esc(p.unRealizedProfit)}</td>
-         <td>${esc(p.leverage)}x</td></tr>`).join("");
-      el("binance").innerHTML =
-        `<table style="width:100%;border-collapse:collapse;font-size:13px">
-           <tr class="muted"><th align="left">symbol</th><th align="left">amt</th><th align="left">entry</th><th align="left">uPnL</th><th align="left">lev</th></tr>
-           ${rows}</table>
-         <div class="muted" style="font-size:12px;margin-top:6px">testnet=${d.binance.testnet}</div>`;
+    // positions
+    if (d.binance && d.binance.available && (d.binance.positions||[]).length){
+      $("pos-testnet").textContent = `testnet=${d.binance.testnet}`;
+      const rows = d.binance.positions.map(p => {
+        const upnl = parseFloat(p.unRealizedProfit);
+        return `<tr>
+          <td><b>${esc(p.symbol)}</b></td>
+          <td class="num">${esc(p.positionAmt)}</td>
+          <td class="num">${esc(p.entryPrice)}</td>
+          <td class="num ${upnl>=0?'pos':'neg'}">${upnl>=0?'+':''}${esc(p.unRealizedProfit)}</td>
+          <td class="num">${esc(p.leverage)}x</td>
+        </tr>`;
+      }).join("");
+      $("binance").innerHTML = `<table class="tbl">
+        <thead><tr><th>symbol</th><th class="num">amount</th><th class="num">entry</th><th class="num">uPnL</th><th class="num">lev</th></tr></thead>
+        <tbody>${rows}</tbody></table>`;
     } else {
-      el("binance").innerHTML = `<span class="muted">${esc(d.binance ? d.binance.reason : "no read-only key configured")}</span>`;
+      $("pos-testnet").textContent = "";
+      $("binance").innerHTML = `<div class="empty">${esc(d.binance ? d.binance.reason : "no read-only key configured")}</div>`;
     }
 
-    // orders history
+    // realized PnL + win rate
+    const pnl = d.binance && d.binance.pnl;
+    if (d.binance && d.binance.available && pnl && pnl.trade_count > 0){
+      $("pnl-testnet").textContent = `testnet=${d.binance.testnet}`;
+      const p = pnl;
+      const tot = parseFloat(p.total_realized || 0);
+      const wr = parseFloat(p.win_rate || 0);
+      const pf = p.profit_factor != null ? p.profit_factor.toFixed(2) : "—";
+      const gp = parseFloat(p.gross_profit || 0);
+      const gl = parseFloat(p.gross_loss || 0);
+      const trades = (p.trades || []).slice(0, 20).map(t => {
+        const inc = parseFloat(t.income || 0);
+        return `<tr>
+          <td class="num">${esc((t.time||"").slice(5,19))}</td>
+          <td><b>${esc(t.symbol)}</b></td>
+          <td class="num ${inc>=0?'pos':'neg'}">${inc>=0?"+":""}${inc.toFixed(4)}</td>
+          <td class="num"><code style="font-size:11px">${esc(t.tradeId)}</code></td>
+        </tr>`;
+      }).join("");
+      $("pnl").innerHTML = `
+        <div class="kpi-row" style="margin-bottom:14px">
+          <div class="card kpi ${tot>=0?'bull':'bear'}">
+            <div class="lbl">Total Realized</div>
+            <div class="val" style="font-size:22px;color:${tot>=0?'var(--bull)':'var(--bear)'}">${tot>=0?"+":""}${tot.toFixed(4)}</div>
+            <div class="sub">USDT</div>
+          </div>
+          <div class="card kpi ${wr>=50?'bull':(wr>0?'amber':'')}">
+            <div class="lbl">Win Rate</div>
+            <div class="val" style="font-size:22px">${wr.toFixed(1)}%</div>
+            <div class="sub">${esc(p.wins)}W / ${esc(p.losses)}L</div>
+          </div>
+          <div class="card kpi">
+            <div class="lbl">Profit Factor</div>
+            <div class="val" style="font-size:22px">${pf}</div>
+            <div class="sub">gross ${gp.toFixed(2)} / ${gl.toFixed(2)}</div>
+          </div>
+          <div class="card kpi amber">
+            <div class="lbl">Closed Fills</div>
+            <div class="val" style="font-size:22px">${esc(p.trade_count)}</div>
+            <div class="sub">REALIZED_PNL</div>
+          </div>
+        </div>
+        <div class="tag" style="color:var(--muted);display:block;margin-bottom:6px">last ${Math.min(20,(p.trades||[]).length)} of ${esc(p.trade_count)} closed fills</div>
+        ${trades ? `<table class="tbl">
+          <thead><tr><th class="num">time</th><th>symbol</th><th class="num">realized</th><th class="num">tradeId</th></tr></thead>
+          <tbody>${trades}</tbody></table>` : `<div class="empty">no closed trades yet</div>`}`;
+    } else {
+      $("pnl-testnet").textContent = "";
+      $("pnl").innerHTML = `<div class="empty">${esc(d.binance ? (d.binance.reason || d.binance.pnl_error || (pnl && pnl.trade_count === 0 ? "no closed trades yet" : "no data")) : "no read-only key configured")}</div>`;
+    }
+
+    // history
     const hist = d.orders_history || [];
-    if(hist.length){
-      const rows = hist.map(o=>
-        `<tr><td>${esc((o.executed_at||"").slice(5,19))}</td><td>${esc(o.symbol)}</td>
-         <td style="color:${o.side==='BUY'?'var(--green)':'var(--red)'}">${esc(o.side)}</td>
-         <td>${esc(o.quantity)}</td><td>${esc(o.entry_price)}</td>
-         <td>${esc(o.sl_price)}</td><td>${esc(o.tp_price)}</td></tr>`).join("");
-      el("history").innerHTML =
-        `<table style="width:100%;border-collapse:collapse;font-size:12px">
-           <tr class="muted"><th align="left">time</th><th align="left">symbol</th><th align="left">side</th>
-           <th align="left">qty</th><th align="left">entry</th><th align="left">SL</th><th align="left">TP</th></tr>
-           ${rows}</table>`;
+    if (hist.length){
+      const rows = hist.map(o => `<tr>
+        <td class="num">${esc((o.executed_at||"").slice(5,19))}</td>
+        <td><b>${esc(o.symbol)}</b></td>
+        <td class="${o.side==='BUY'?'pos':'neg'}">${esc(o.side)}</td>
+        <td class="num">${esc(o.quantity)}</td>
+        <td class="num">${esc(o.entry_price)}</td>
+        <td class="num">${esc(o.sl_price)}</td>
+        <td class="num">${esc(o.tp_price)}</td>
+      </tr>`).join("");
+      $("history").innerHTML = `<table class="tbl">
+        <thead><tr><th class="num">time</th><th>symbol</th><th>side</th><th class="num">qty</th><th class="num">entry</th><th class="num">SL</th><th class="num">TP</th></tr></thead>
+        <tbody>${rows}</tbody></table>`;
     } else {
-      el("history").innerHTML = `<span class="muted">none yet</span>`;
+      $("history").innerHTML = `<div class="empty">no orders yet</div>`;
     }
-  }catch(e){
-    el("live").textContent = "offline";
-    el("live").className = "pill red";
+  } catch(e){
+    const live = $("live");
+    live.className = "pill off";
+    live.innerHTML = `<span class="dot"></span>offline`;
+    $("kpi-conn").textContent = "Offline";
+    $("kpi-conn").style.color = "var(--bear)";
+    $("kpi-conn-sub").textContent = String(e).slice(0,60);
   }
 }
 
+/* =====================================================
+   Kill switch (only write endpoint).
+   ===================================================== */
 async function toggleKs(enable){
-  const token = el("token").value;
-  if(!token){ alert("Enter DASHBOARD_TOKEN first"); return; }
-  const r = await fetch(`/api/killswitch?enable=${enable}`, {
-    method:"POST",
-    headers:{"X-Dashboard-Token": token}
-  });
-  if(r.status===401){ alert("Invalid token"); }
-  const d = await r.json().catch(()=>({}));
-  poll();
-}
-
-// ---- Price chart (read-only public klines) ----
-async function loadChart(){
-  const symbol = el("chart-symbol").value.trim().toUpperCase() || "BTCUSDT";
-  const interval = el("chart-interval").value;
-  el("chart-info").textContent = "loading…";
+  const token = $("token").value;
+  if (!token){ toast("Enter DASHBOARD_TOKEN first", "err"); return; }
+  const btn = event?.currentTarget; if (btn) btn.disabled = true;
   try{
-    const r = await fetch(`/api/chart?symbol=${symbol}&interval=${interval}&limit=200`, {cache:"no-store"});
-    const d = await r.json();
-    if(d.error){ el("chart-info").textContent = d.error; return; }
-    drawChart(d.candles, symbol, interval);
-    el("chart-info").textContent = `${symbol} · ${interval} · ${d.candles.length} candles`;
-  }catch(e){ el("chart-info").textContent = "chart error"; }
-}
-
-function drawChart(candles, symbol, interval){
-  const cv = el("chart"); const ctx = cv.getContext("2d");
-  const W = cv.width, H = cv.height, pad = 40;
-  ctx.clearRect(0,0,W,H);
-  if(!candles.length) return;
-  const closes = candles.map(c=>c.c);
-  const hi = Math.max(...candles.map(c=>c.h)), lo = Math.min(...candles.map(c=>c.l));
-  const y = v => pad + (H-pad*2) * (1 - (v-lo)/(hi-lo || 1));
-  // grid + price labels
-  ctx.strokeStyle = "#30363d"; ctx.fillStyle = "#8b949e"; ctx.font = "11px monospace";
-  for(let i=0;i<=4;i++){
-    const v = lo + (hi-lo)*i/4; const yy = y(v);
-    ctx.beginPath(); ctx.moveTo(pad, yy); ctx.lineTo(W-10, yy); ctx.stroke();
-    ctx.fillText(v.toFixed(v<1?4:0), 2, yy+3);
+    const r = await fetch(`/api/killswitch?enable=${enable}`, {
+      method: "POST", headers: { "X-Dashboard-Token": token }
+    });
+    if (r.status === 401) toast("Invalid token", "err");
+    else toast(enable ? "Kill switch enabled. Trading halted" : "Kill switch disabled. Trading resumed", "ok");
+    await poll();
+  } catch(e){
+    toast("Toggle failed: " + String(e).slice(0,40), "err");
+  } finally {
+    if (btn) btn.disabled = false;
   }
-  // close-price line
-  const step = (W-pad-10)/(candles.length-1 || 1);
-  ctx.strokeStyle = "#58a6ff"; ctx.lineWidth = 1.5; ctx.beginPath();
-  closes.forEach((c,i)=>{ const xx = pad + i*step; (i?ctx.lineTo:ctx.moveTo).call(ctx, xx, y(c)); });
-  ctx.stroke();
-  // last price dot
-  const lx = pad + (closes.length-1)*step, ly = y(closes[closes.length-1]);
-  ctx.fillStyle = "#3fb950"; ctx.beginPath(); ctx.arc(lx, ly, 3, 0, 7); ctx.fill();
-  ctx.fillText(closes[closes.length-1].toFixed(closes[closes.length-1]<1?4:0), lx-30, ly-6);
 }
 
+/* =====================================================
+   Chart. Candlestick + volume, or area. Crosshair + OHLC table.
+   ===================================================== */
+let candles = [], chartSymbol = "BTCUSDT", chartInterval = "1h", chartView = "candles";
+let paused = false, chartTimer = null;
+const cv = $("chart"), tip = $("tip");
+
+function fitCanvas(){
+  const dpr = window.devicePixelRatio || 1;
+  const rect = cv.getBoundingClientRect();
+  cv.width = Math.round(rect.width * dpr);
+  cv.height = Math.round(360 * dpr);
+  cv.getContext("2d").setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { W: rect.width, H: 360 };
+}
+
+function fmt(v){
+  if (v >= 1000) return v.toFixed(0);
+  if (v >= 100) return v.toFixed(2);
+  if (v >= 1) return v.toFixed(2);
+  return v.toFixed(4);
+}
+
+function drawChart(){
+  if (!candles.length) return;
+  const { W, H } = fitCanvas();
+  const ctx = cv.getContext("2d");
+  const padL = 50, padR = 62, padT = 14, padB = 22;
+  const volH = Math.round((H - padT - padB) * 0.22);   // volume strip height
+  const priceTop = padT, priceBot = H - padB - volH - 6;
+
+  ctx.clearRect(0, 0, W, H);
+
+  const hi = Math.max(...candles.map(c => c.h));
+  const lo = Math.min(...candles.map(c => c.l));
+  const span = (hi - lo) || 1;
+  const yPrice = v => priceTop + (priceBot - priceTop) * (1 - (v - lo) / span);
+  const n = candles.length;
+  const plotW = W - padL - padR;
+  const x = i => padL + (n === 1 ? plotW/2 : i * plotW / (n - 1));
+  const cw = Math.max(1.5, Math.min(11, plotW / n * 0.62));
+
+  const maxVol = Math.max(...candles.map(c => c.v || 0)) || 1;
+  const yVol = v => (H - padB) - volH * (v / maxVol);
+
+  // grid + price labels
+  ctx.strokeStyle = "rgba(148,163,184,0.08)";
+  ctx.fillStyle = "#64748b";
+  ctx.font = "11px ui-monospace, monospace";
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++){
+    const v = lo + span * i / 4, yy = yPrice(v);
+    ctx.beginPath(); ctx.moveTo(padL, yy); ctx.lineTo(W - padR, yy); ctx.stroke();
+    ctx.fillText(fmt(v), 6, yy + 3);
+  }
+
+  const closes = candles.map(c => c.c);
+  const last = closes[closes.length - 1], first = closes[0];
+  const chgPct = ((last - first) / first) * 100;
+  const sessionUp = last >= first;
+  $("price-change").textContent = `${chgPct>=0?"+":""}${chgPct.toFixed(2)}% over range`;
+  $("price-change").style.color = sessionUp ? "var(--bull)" : "var(--bear)";
+
+  if (chartView === "area"){
+    // area fill
+    ctx.beginPath();
+    closes.forEach((c, i) => { const xx = x(i); (i ? ctx.lineTo : ctx.moveTo).call(ctx, xx, yPrice(c)); });
+    ctx.lineTo(x(n-1), priceBot); ctx.lineTo(x(0), priceBot); ctx.closePath();
+    const g = ctx.createLinearGradient(0, priceTop, 0, priceBot);
+    g.addColorStop(0, sessionUp ? "rgba(45,212,191,0.30)" : "rgba(244,63,94,0.30)");
+    g.addColorStop(1, "rgba(45,212,191,0)");
+    ctx.fillStyle = g; ctx.fill();
+    // line
+    ctx.beginPath();
+    closes.forEach((c, i) => { const xx = x(i); (i ? ctx.lineTo : ctx.moveTo).call(ctx, xx, yPrice(c)); });
+    ctx.strokeStyle = sessionUp ? "#2dd4bf" : "#f43f5e";
+    ctx.lineWidth = 1.6; ctx.lineJoin = "round"; ctx.stroke();
+  } else {
+    // candlesticks + volume
+    candles.forEach((c, i) => {
+      const xx = x(i);
+      const up = c.c >= c.o;
+      const col = up ? "#2dd4bf" : "#f43f5e";
+      // volume bar (40% opacity)
+      ctx.fillStyle = up ? "rgba(45,212,191,0.4)" : "rgba(244,63,94,0.4)";
+      ctx.fillRect(xx - cw/2, yVol(c.v || 0), cw, (H - padB) - yVol(c.v || 0));
+      // wick
+      ctx.strokeStyle = col; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(xx, yPrice(c.h)); ctx.lineTo(xx, yPrice(c.l)); ctx.stroke();
+      // body
+      const yo = yPrice(c.o), yc = yPrice(c.c);
+      ctx.fillStyle = col;
+      ctx.fillRect(xx - cw/2, Math.min(yo, yc), cw, Math.max(1, Math.abs(yc - yo)));
+    });
+  }
+
+  // last price marker + label box
+  const ly = yPrice(last);
+  ctx.fillStyle = "rgba(11,17,32,0.95)";
+  ctx.fillRect(W - padR + 2, ly - 10, padR - 4, 20);
+  ctx.strokeStyle = sessionUp ? "#2dd4bf" : "#f43f5e";
+  ctx.strokeRect(W - padR + 2, ly - 10, padR - 4, 20);
+  ctx.fillStyle = sessionUp ? "#2dd4bf" : "#f43f5e";
+  ctx.font = "bold 11px ui-monospace, monospace";
+  ctx.fillText(fmt(last), W - padR + 6, ly + 4);
+  // dashed line to label
+  ctx.setLineDash([3,3]); ctx.strokeStyle = "rgba(148,163,184,0.25)";
+  ctx.beginPath(); ctx.moveTo(padL, ly); ctx.lineTo(W - padR, ly); ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+function renderOhlcTable(){
+  if (!candles.length){ $("ohlc-table").innerHTML = `<div class="empty">no data</div>`; return; }
+  // show last 30 for readability
+  const rows = candles.slice(-30).reverse().map(c => {
+    const up = c.c >= c.o;
+    const d = new Date(c.t);
+    const p = n => String(n).padStart(2,"0");
+    const ts = `${d.getUTCFullYear()}-${p(d.getUTCMonth()+1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`;
+    return `<tr>
+      <td class="num">${ts}</td>
+      <td class="num">${c.o}</td><td class="num">${c.h}</td><td class="num">${c.l}</td>
+      <td class="num ${up?'pos':'neg'}">${c.c}</td><td class="num">${(c.v||0).toFixed(0)}</td>
+    </tr>`;
+  }).join("");
+  $("ohlc-table").innerHTML = `<table class="tbl">
+    <thead><tr><th class="num">time (UTC)</th><th class="num">open</th><th class="num">high</th><th class="num">low</th><th class="num">close</th><th class="num">volume</th></tr></thead>
+    <tbody>${rows}</tbody></table><div class="empty" style="margin-top:6px">showing last 30 of ${candles.length} candles</div>`;
+}
+
+async function loadChart(){
+  const symbol = $("chart-symbol").value.trim().toUpperCase() || "BTCUSDT";
+  chartSymbol = symbol;
+  $("chart-info").textContent = "loading…";
+  try{
+    const r = await fetch(`/api/chart?symbol=${symbol}&interval=${chartInterval}&limit=200`, { cache: "no-store" });
+    const d = await r.json();
+    if (d.error){ $("chart-info").textContent = d.error; return; }
+    candles = d.candles || [];
+    drawChart();
+    renderOhlcTable();
+    $("chart-info").textContent = `${symbol} · ${chartInterval} · ${candles.length} candles`;
+  } catch(e){
+    $("chart-info").textContent = "chart error";
+  }
+}
+
+/* Crosshair tooltip. OHLC on hover. */
+cv.addEventListener("mousemove", e => {
+  if (!candles.length) return;
+  const rect = cv.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const padL = 50, padR = 62;
+  const idx = Math.round((mx - padL) / ((rect.width - padL - padR) / (candles.length - 1 || 1)));
+  const c = candles[Math.max(0, Math.min(candles.length - 1, idx))];
+  if (!c) return;
+  const up = c.c >= c.o;
+  tip.innerHTML = `O <b>${c.o}</b> H <b>${c.h}</b> L <b>${c.l}</b> C <b class="${up?'pos':'neg'}">${c.c}</b> V <b>${(c.v||0).toFixed(0)}</b>`;
+  tip.style.opacity = 1;
+  let left = mx + 14;
+  if (left + 260 > rect.width) left = mx - 270;
+  tip.style.left = Math.max(8, left) + "px";
+  tip.style.top = "12px";
+});
+cv.addEventListener("mouseleave", () => { tip.style.opacity = 0; });
+
+/* Interval tabs. */
+$("interval-tabs").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  document.querySelectorAll("#interval-tabs button").forEach(x => x.classList.remove("active"));
+  b.classList.add("active"); chartInterval = b.dataset.iv; loadChart();
+});
+/* View tabs (candles/area). */
+$("view-tabs").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  document.querySelectorAll("#view-tabs button").forEach(x => x.classList.remove("active"));
+  b.classList.add("active"); chartView = b.dataset.view; drawChart();
+});
+
+/* Pause/resume auto-refresh. Required by streaming-chart a11y rule. */
+function togglePause(){
+  paused = !paused;
+  const btn = $("pause-btn"), lbl = $("pause-lbl");
+  btn.setAttribute("aria-pressed", String(paused));
+  lbl.textContent = paused ? "Resume" : "Pause";
+  btn.querySelector("svg").innerHTML = paused
+    ? "<path d='M7 5l12 7-12 7z'/>"
+    : "<rect x='7' y='5' width='3' height='14' rx='1'/><rect x='14' y='5' width='3' height='14' rx='1'/>";
+  if (paused){ clearInterval(chartTimer); chartTimer = null; }
+  else { chartTimer = setInterval(loadChart, 30000); }
+  toast(paused ? "Chart auto-refresh paused" : "Chart auto-refresh resumed", "ok");
+}
+
+window.addEventListener("resize", () => { if (candles.length) drawChart(); });
+
+/* =====================================================
+   Scan report.
+   ===================================================== */
+async function loadScan(){
+  try{
+    const r = await fetch("/api/scan", { cache: "no-store" });
+    const d = await r.json();
+    if (!d || d.available === false){
+      $("scan-when").textContent = "";
+      $("scan").innerHTML = `<div class="empty">${esc(d?.reason || "no scan run yet")}</div>`; return;
+    }
+    $("scan-when").textContent = `scanned ${esc((d.scanned_at||"").slice(0,19))}`;
+    const tc = (d.top_candidates || []).map((c, i) => {
+      const chg = c.change_pct || 0;
+      return `<tr>
+        <td class="num">${i+1}</td><td><b>${esc(c.symbol)}</b></td>
+        <td class="num ${chg>=0?'pos':'neg'}">${chg.toFixed(2)}%</td>
+        <td class="num">${((c.quote_volume||0)/1e6).toFixed(1)}M</td>
+        <td class="num">${c.rsi!=null?(typeof c.rsi==='number'?c.rsi.toFixed(1):esc(c.rsi)):'-'}</td>
+        <td class="num"><b>${(c.score||0).toFixed(2)}</b></td>
+      </tr>`;
+    }).join("");
+    const em = (d.signals_emitted || []).map(s =>
+      `<span class="pill ${s.action==='BUY'?'live':'off'}"><span class="dot"></span>${esc(s.symbol)} ${esc(s.action)} ${esc(s.confidence)}</span>`
+    ).join(" ");
+    $("scan").innerHTML = `
+      <div class="kv"><span class="k">provider</span><b>${esc(d.provider)}</b></div>
+      <div class="kv"><span class="k">universe scanned</span><b class="num">${esc(d.universe_count)}</b> coins</div>
+      <div class="kv"><span class="k">min quote volume</span><span class="num">${esc(d.min_quote_volume)} USDT</span></div>
+      <div class="kv"><span class="k">top_n shortlist</span><span class="num">${esc(d.top_n)}</span></div>
+      <div style="margin:12px 0 8px;display:flex;gap:6px;flex-wrap:wrap">
+        <span class="tag" style="color:var(--muted)">signals emitted:</span> ${em || '<span class="empty" style="display:inline">none</span>'}
+      </div>
+      <details><summary>top ${esc((d.top_candidates||[]).length)} candidates (ranked)</summary>
+        <table class="tbl" style="margin-top:8px">
+          <thead><tr><th class="num">#</th><th>symbol</th><th class="num">24h</th><th class="num">vol</th><th class="num">RSI</th><th class="num">score</th></tr></thead>
+          <tbody>${tc}</tbody>
+        </table>
+      </details>`;
+  } catch(e){
+    $("scan").innerHTML = `<div class="empty">scan load error</div>`;
+  }
+}
+
+/* =====================================================
+   Boot
+   ===================================================== */
 poll();
 setInterval(poll, 3000);
 loadChart();
+chartTimer = setInterval(loadChart, 30000);
 loadScan();
 setInterval(loadScan, 10000);
-
-// ---- Scan report (read-only) ----
-async function loadScan(){
-  try{
-    const r = await fetch("/api/scan", {cache:"no-store"});
-    const d = await r.json();
-    if(!d || d.available === false){
-      el("scan").innerHTML = `<span class="muted">${esc(d?.reason||"no scan yet")}</span>`; return;
-    }
-    const tc = (d.top_candidates||[]).map((c,i)=>
-      `<tr><td>${i+1}</td><td><b>${esc(c.symbol)}</b></td>
-       <td style="color:${(c.change_pct||0)>=0?'var(--green)':'var(--red)'}">${(c.change_pct||0).toFixed(2)}%</td>
-       <td>${((c.quote_volume||0)/1e6).toFixed(1)}M</td>
-       <td>${c.rsi!=null?(typeof c.rsi==='number'?c.rsi.toFixed(1):esc(c.rsi)):'-'}</td>
-       <td>${(c.score||0).toFixed(2)}</td></tr>`).join("");
-    const em = (d.signals_emitted||[]).map(s=>
-      `<span class="pill ${s.action==='BUY'?'green':'red'}" style="margin:2px">${esc(s.symbol)} ${esc(s.action)} ${esc(s.confidence)}</span>`).join("");
-    el("scan").innerHTML =
-      `<div class="row"><span>scanned at</span>${esc((d.scanned_at||"").slice(0,19))}</div>
-       <div class="row"><span>provider</span><b>${esc(d.provider)}</b></div>
-       <div class="row"><span>universe scanned</span><b>${esc(d.universe_count)}</b> coins</div>
-       <div class="row"><span>min_quote_volume</span>${esc(d.min_quote_volume)} USDT</div>
-       <div class="row"><span>top_n shortlist</span>${esc(d.top_n)}</div>
-       <div style="margin:8px 0"><span class="muted">signals emitted:</span> ${em||'<span class="muted">none</span>'}</div>
-       <details><summary class="muted" style="cursor:pointer">top ${esc((d.top_candidates||[]).length)} candidates (ranked)</summary>
-         <table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:6px">
-           <tr class="muted"><th>#</th><th align="left">symbol</th><th align="left">24h</th><th align="left">vol</th><th align="left">RSI</th><th align="left">score</th></tr>
-           ${tc}</table></details>`;
-  }catch(e){ el("scan").innerHTML = `<span class="muted">scan load error</span>`; }
-}
 </script>
 </body>
 </html>
