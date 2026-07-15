@@ -183,11 +183,12 @@ def test_already_processed_blocks(guard):
 # ---------------------------------------------------------------------
 # Daily limit
 # ---------------------------------------------------------------------
-def test_daily_limit_blocks(guard):
+def test_daily_limit_blocks(guard, config):
     today = datetime.fromtimestamp(NOW, tz=timezone.utc).strftime("%Y-%m-%d")
+    max_daily = int(config["risk_guard"]["max_daily_trades"])
     state = fresh_state()
     state["trades_date"] = today
-    state["trades_today"] = 10  # default max_daily_trades
+    state["trades_today"] = max_daily  # at the configured limit
     ok, reason = guard.validate(make_signal(run_id="run-new"), state, now_ts=NOW)
     assert ok is False
     assert "daily_limit_reached" in reason

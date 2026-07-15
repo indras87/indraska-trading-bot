@@ -273,6 +273,9 @@ def reconcile_exits(client, logger: logging.Logger, config: Dict[str, Any]) -> N
         sym = o.get("symbol")
         if sym in open_syms:
             continue  # position still open
+        # Position gone: cancel any orphan conditional orders before
+        # resolving the exit, so they cannot trigger -4130 later.
+        _cancel_open_orders(client, logger, sym)
         try:
             exit_type, exit_price = _resolve_exit(
                 client, logger, sym, o.get("sl_order_id"), o.get("tp_order_id")
@@ -394,6 +397,23 @@ def _cond_stop(order: Dict[str, Any]) -> Any:
     return order.get("triggerPrice") or order.get("stopPrice")
 
 
+def _cancel_open_orders(client, logger: logging.Logger, symbol: str) -> None:
+    """Cancel all open (conditional SL/TP) orders for a symbol.
+
+    Clears leftover conditional orders from a previously-closed position so
+    that placing fresh SL/TP does not hit Binance API error -4130
+    ('An open stop or take profit order with GTE and closePosition in the
+    direction is existing'). Safe: cancels pending orders only, never
+    affects an open position.
+    """
+    try:
+        client.futures_cancel_all_open_orders(symbol=symbol)
+        logger.info("cleared open orders for %s", symbol)
+    except Exception as e:
+        # Common: 'No open orders to cancel'. Log, continue.
+        logger.warning("cancel_open_orders %s note: %s", symbol, e)
+
+
 # =====================================================================
 # Order placement — the single order entrypoint.
 # Goes through RiskGuard.validate() in process_signal() BEFORE this is called.
@@ -434,6 +454,10 @@ def place_futures_order(
         logger.info("margin type ISOLATED for %s", symbol)
     except Exception as e:
         logger.info("margin_type %s note: %s", symbol, e)
+
+    # Clear any leftover conditional SL/TP from a prior position on this
+    # symbol before placing fresh ones (prevents API error -4130).
+    _cancel_open_orders(client, logger, symbol)
 
     # Quantity from notional.
     raw_qty = notional_usdt / entry_price
