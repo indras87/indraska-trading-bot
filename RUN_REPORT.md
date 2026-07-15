@@ -204,3 +204,64 @@ GLM mengembalikan alasan (mis. "Capitulation setup: RSI 16 oversold + volume bes
 | Write-path delegation | `executor.append_order_history(cfg, fake)` → row masuk DB (verifikasi tanpa order nyata) |
 
 **Testnet:** tetap `BINANCE_TESTNET=true`. `.env` TIDAK di-print/ditulis; hanya verifikasi ada. `runtime/bot.db*` di-gitignore (data runtime, bukan secret).
+
+---
+
+## 2026-07-15 — max_daily_trades 50 + auto-pause scanning saat limit harian
+
+### Perubahan
+- `executor/config.yaml`: `risk_guard.max_daily_trades` 10 → **50** (eksplisit user request). Tambah `executor.scan_pause_file: runtime/SCAN_PAUSED`.
+- `executor/executor.py`: fn baru `sync_scan_pause(config, state, guard, logger, now_ts)` — tulis flag `SCAN_PAUSED` saat `trades_today >= max_daily_trades`, hapus saat di bawah limit. Main loop direstrukturisasi: `load_state` + `rollover_daily` + `sync_scan_pause` + `save_state` di **setiap iterasi** (anti-deadlock: flag ter-sync walau tidak ada sinyal baru; auto-resume di midnight UTC ≤30s).
+- `vibe-trading/generate_signal.py`: `scan_signals()` cek `runtime/SCAN_PAUSED` di awal → kalau ada, log skip + `return []` **tanpa** panggil scanner/Z.ai (hemat quota). Tidak nyebrang boundary — scanner cuma baca flag file lokal.
+- `risk_guard.py` validate() **tidak diubah** — cek daily limit tetap sebagai lapis pertahanan (fail-safe kalau flag gagal).
+
+### Verifikasi (lokal, tanpa order nyata)
+| Kasus | Hasil |
+|---|---|
+| py_compile executor.py + generate_signal.py | OK |
+| sync_scan_pause: state 50/50, max=50 | flag `SCAN_PAUSED` dibuat ✓ |
+| sync_scan_pause idempotent (panggil lagi) | flag tetap, no error ✓ |
+| sync_scan_pause: rollover (trades_date lama) | flag dihapus ✓ |
+| sync_scan_pause: under limit (3/50) | tidak ada flag ✓ |
+| sync_scan_pause: parent dir absent | mkdir otomatis, flag dibuat ✓ |
+| Scanner skip: flag ada + scanner di-poison | `return []` 0.00s, scanner tidak tersentuh ✓ |
+
+### Catatan
+- "Mematikan scanning" = **skip scan run** (systemd timer tetap nyala sebagai no-op murah), BUKAN stop timer. Auto-resume hari berikutnya. Bisa juga `touch runtime/SCAN_PAUSED` manual untuk pause.
+- Dengan limit 50, pause baru kena kalau 50 trade/hari (testnet: jarang). Fitur relevan di mainnet volume tinggi.
+- **Testnet:** `BINANCE_TESTNET=true` tetap default. `.env` tidak di-print. Belum ada order testnet baru untuk path ini (butuh 50 trade untuk trigger alami), tapi logic path ter-verifikasi via unit test di atas.
+
+---
+
+## 2026-07-15 — Exit tracking + win/lose lokal di executor
+
+### Perubahan
+- `executor/store.py`: tabel `orders` + 6 kolom (`status, exit_type, realized_pnl, outcome, closed_at, exit_price`) via migrasi idempotent (`_migrate_orders_columns`, cek `PRAGMA table_info` — aman untuk DB lama). Accessors: `open_orders()`, `mark_closed()`, `closed_trades()`, `local_trade_stats()`. `append_order` set `status='open'` eksplisit.
+- `executor/executor.py`: fn `reconcile_exits(client, logger, config)` — tiap loop poll posisi; order open yang posisinya sudah 0 → resolve exit (`_resolve_exit` via `futures_get_all_orders` status FILLED → TP/SL/MANUAL) + realized PnL (`_resolve_pnl` via `futures_income_history REALIZED_PNL` setelah entry) + outcome (win/loss/breakeven) → `mark_closed` + log `CLOSED run_id=... exit=... outcome=... pnl=...`. Dipanggil tiap iterasi loop dalam try/except (network-safe, read-only, tidak pernah order). Helper `_to_ms` ISO→epoch ms.
+- `dashboard/app.py`: `/api/status` tambah `local_pnl` (`store.local_trade_stats` + `closed_trades`).
+- `dashboard/index.html`: panel baru **"Trade Outcomes (local)"** — KPI local realized/win rate/closed count + tabel trade (closed_at, symbol, side, exit_type pill, outcome, realized). Berdampingan dengan panel "Realized PnL" (sumber Binance), jelas dibedakan tag "executor-tracked · not from Binance".
+
+### Verifikasi (lokal, tanpa order nyata)
+| Kasus | Hasil |
+|---|---|
+| py_compile store.py, executor.py, app.py | OK |
+| node --check index.html JS | OK |
+| store migrasi idempotent (init_db di-DB baru & re-run) | kolom hadir, tidak crash ✓ |
+| store: open_orders → mark_closed → closed_trades → local_trade_stats | count/status/outcome/stats benar ✓ |
+| reconcile_exits (fake client: posisi tutup, TP FILLED @104, income +3.0) | exit_type=TP, outcome=win, pnl=3.0, exit_price=104, status=closed ✓ |
+| reconcile_exits idempotent (run lagi, 0 open) | no-op, closed count tetap ✓ |
+| network error fake (get_all_orders raise) | return UNKNOWN, tidak crash ✓ (try/except) |
+
+### Catatan / limitasi v1 (didokumentasikan di kode)
+- **Same-symbol re-entry** sebelum close lama → `_resolve_pnl` bisa agregat beberapa close. v1 match oldest open + income setelah entry-time.
+- **Executor mati saat close** → reconcile tertangkap saat start ulang (posisi 0 + income history masih ada); `closed_at` = waktu deteksi, bukan aktual.
+- **Breakeven** (pnl==0) → outcome `breakeven`.
+- Sumber USDT tetap `REALIZED_PNL` income (hybrid, sesuai pilihan user); outcome + exit_type = data milik executor.
+
+### Yang TIDAK berubah
+- risk_guard.validate() tidak diubah (tetap gate order; daily-limit check tetap ada).
+- `place_futures_order` tidak diubah. Tidak ada path order baru.
+- Panel "Realized PnL & Win Rate" lama (Binance) tetap; panel baru berdampingan.
+- config.yaml tidak diubah.
+
+**Testnet:** `BINANCE_TESTNET=true` tetap default. `.env` tidak di-print. Logic path ter-verifikasi via fake-client test; e2e order testnet penuh (tunggu SL/TP kena asli) menunggu run bot berikutnya.

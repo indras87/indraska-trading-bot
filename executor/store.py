@@ -13,9 +13,15 @@ Concurrency:
 
 Schema:
   orders(id, executed_at, symbol, side, quantity, entry_price, sl_price,
-         tp_price, entry_order_id, sl_order_id, tp_order_id, payload)
+         tp_price, entry_order_id, sl_order_id, tp_order_id, payload,
+         status, exit_type, realized_pnl, outcome, closed_at, exit_price)
   processed_runs(run_id PK, ts)
   meta(k PK, trades_today, trades_date)         -- single row k='executor'
+
+Exit tracking: orders start status='open'. The executor's reconcile_exits()
+polls Binance positions each loop; when an open order's symbol has no
+position, it resolves the exit (SL/TP/manual) + realized PnL + outcome and
+calls mark_closed() to set status='closed' with the result.
 """
 
 from __future__ import annotations
@@ -80,7 +86,13 @@ def init_db(path: Path) -> None:
                 entry_order_id  TEXT,
                 sl_order_id     TEXT,
                 tp_order_id     TEXT,
-                payload         TEXT NOT NULL
+                payload         TEXT NOT NULL,
+                status          TEXT DEFAULT 'open',
+                exit_type       TEXT,
+                realized_pnl    REAL,
+                outcome         TEXT,
+                closed_at       TEXT,
+                exit_price      REAL
             );
             CREATE INDEX IF NOT EXISTS idx_orders_time ON orders(executed_at);
 
@@ -98,7 +110,48 @@ def init_db(path: Path) -> None:
             VALUES (?, 0, '');
             """
         )
+        _migrate_orders_columns(conn)
         conn.execute("PRAGMA optimize;")
+
+
+def _migrate_orders_columns(conn: sqlite3.Connection) -> None:
+    """Add exit-tracking columns to an existing orders table (idempotent).
+    SQLite has no ADD COLUMN IF NOT EXISTS, so check PRAGMA table_info first."""
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(orders)")}
+    additions = {
+        "status": "TEXT DEFAULT 'open'",
+        "exit_type": "TEXT",
+        "realized_pnl": "REAL",
+        "outcome": "TEXT",
+        "closed_at": "TEXT",
+        "exit_price": "REAL",
+    }
+    for col, decl in additions.items():
+        if col not in existing:
+            try:
+                conn.execute(f"ALTER TABLE orders ADD COLUMN {col} {decl}")
+            except sqlite3.OperationalError:
+                # Concurrent migration by another process (race on the column
+                # check) — the column now exists, so this is safe to ignore.
+                pass
+    # status index created here (after columns exist) so it works on both
+    # fresh DBs and pre-migration DBs.
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status)")
+
+
+_migrated: set = set()
+
+
+def _ensure_schema(config: Optional[Dict[str, Any]]) -> Path:
+    """Make sure the DB file exists + is migrated, once per process per path.
+    Used by read-only accessors so they never hit a pre-migration DB and fail
+    with 'no such column'."""
+    p = db_path(config)
+    key = str(p)
+    if key not in _migrated:
+        init_db(p)
+        _migrated.add(key)
+    return p
 
 
 def _ensure(config: Optional[Dict[str, Any]]) -> Path:
@@ -173,8 +226,8 @@ def append_order(config: Dict[str, Any], result: Dict[str, Any]) -> None:
             """
             INSERT INTO orders (
                 executed_at, symbol, side, quantity, entry_price, sl_price,
-                tp_price, entry_order_id, sl_order_id, tp_order_id, payload
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                tp_price, entry_order_id, sl_order_id, tp_order_id, payload, status
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 executed_at,
@@ -188,6 +241,7 @@ def append_order(config: Dict[str, Any], result: Dict[str, Any]) -> None:
                 result.get("sl_order_id"),
                 result.get("tp_order_id"),
                 json.dumps(result, default=str),
+                "open",
             ),
         )
 
@@ -205,6 +259,7 @@ def _row_to_order(row: sqlite3.Row) -> Dict[str, Any]:
     """Prefer structured columns; fall back to payload JSON for anything missing
     (keeps the shape the frontend/executor expects)."""
     base = {
+        "id": row["id"],
         "executed_at": row["executed_at"],
         "symbol": row["symbol"],
         "side": row["side"],
@@ -215,6 +270,12 @@ def _row_to_order(row: sqlite3.Row) -> Dict[str, Any]:
         "entry_order_id": row["entry_order_id"],
         "sl_order_id": row["sl_order_id"],
         "tp_order_id": row["tp_order_id"],
+        "status": row["status"] if "status" in row.keys() else "open",
+        "exit_type": row["exit_type"] if "exit_type" in row.keys() else None,
+        "realized_pnl": row["realized_pnl"] if "realized_pnl" in row.keys() else None,
+        "outcome": row["outcome"] if "outcome" in row.keys() else None,
+        "closed_at": row["closed_at"] if "closed_at" in row.keys() else None,
+        "exit_price": row["exit_price"] if "exit_price" in row.keys() else None,
     }
     try:
         payload = json.loads(row["payload"]) if row["payload"] else {}
@@ -243,3 +304,94 @@ def latest_order(config: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, 
     """Most recent order, or None."""
     rows = recent_orders(config, limit=1)
     return rows[0] if rows else None
+
+
+# =====================================================================
+# Exit tracking — open/closed lifecycle + local outcome stats
+# =====================================================================
+def open_orders(config: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """Orders still considered open (status='open' or NULL), oldest-first.
+    Used by the executor to poll for closes each loop."""
+    if not db_path(config).exists():
+        return []
+    p = _ensure_schema(config)
+    with connect(p, read_only=True) as conn:
+        rows = conn.execute(
+            "SELECT * FROM orders WHERE status='open' OR status IS NULL ORDER BY id ASC"
+        ).fetchall()
+    return [_row_to_order(r) for r in rows]
+
+
+def mark_closed(
+    config: Dict[str, Any],
+    order_id: int,
+    *,
+    exit_type: str,
+    realized_pnl: Optional[float],
+    outcome: str,
+    closed_at: str,
+    exit_price: Optional[float] = None,
+) -> None:
+    """Mark an order closed with its resolved exit details. Idempotent in the
+    sense that re-closing the same id just overwrites; caller ensures single
+    resolution per close."""
+    p = _ensure(config)
+    with connect(p) as conn:
+        conn.execute(
+            """
+            UPDATE orders SET status='closed', exit_type=?, realized_pnl=?,
+                              outcome=?, closed_at=?, exit_price=?
+            WHERE id=? AND status='open'
+            """,
+            (exit_type, realized_pnl, outcome, closed_at, exit_price, int(order_id)),
+        )
+
+
+def closed_trades(config: Optional[Dict[str, Any]] = None, limit: int = 20) -> List[Dict[str, Any]]:
+    """Closed orders newest-first (executor-owned outcome records)."""
+    if not db_path(config).exists():
+        return []
+    p = _ensure_schema(config)
+    with connect(p, read_only=True) as conn:
+        rows = conn.execute(
+            "SELECT * FROM orders WHERE status='closed' ORDER BY id DESC LIMIT ?",
+            (int(limit),),
+        ).fetchall()
+    return [_row_to_order(r) for r in rows]
+
+
+def local_trade_stats(config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Aggregate outcome stats from executor-owned closed trades (NOT from
+    Binance income history). Returns wins/losses/win_rate/total_realized/count."""
+    if not db_path(config).exists():
+        return _empty_stats()
+    p = _ensure_schema(config)
+    with connect(p, read_only=True) as conn:
+        rows = conn.execute(
+            "SELECT realized_pnl, outcome FROM orders WHERE status='closed'"
+        ).fetchall()
+    if not rows:
+        return _empty_stats()
+    wins = losses = 0
+    total = 0.0
+    for r in rows:
+        pnl = r["realized_pnl"]
+        pnl = float(pnl) if pnl is not None else 0.0
+        total += pnl
+        out = r["outcome"]
+        if out == "win":
+            wins += 1
+        elif out == "loss":
+            losses += 1
+    decided = wins + losses
+    return {
+        "trade_count": len(rows),
+        "wins": wins,
+        "losses": losses,
+        "win_rate": round(wins / decided * 100, 2) if decided else 0.0,
+        "total_realized": round(total, 6),
+    }
+
+
+def _empty_stats() -> Dict[str, Any]:
+    return {"trade_count": 0, "wins": 0, "losses": 0, "win_rate": 0.0, "total_realized": 0.0}

@@ -514,6 +514,12 @@
     <div id="pnl"><div class="skel" style="height:80px"></div></div>
   </div>
 
+  <!-- ===================== LOCAL TRADE OUTCOMES (executor-owned) ===================== -->
+  <div class="card reveal" style="margin-bottom:18px">
+    <div class="card-head"><h2>Trade Outcomes (local)</h2><div class="spacer"></div><span class="tag">executor-tracked · not from Binance</span></div>
+    <div id="local-pnl"><div class="skel" style="height:80px"></div></div>
+  </div>
+
   <!-- ===================== SCAN ===================== -->
   <div class="card reveal" style="margin-bottom:18px">
     <div class="card-head"><h2>Market Scan</h2><div class="spacer"></div><span class="tag" id="scan-when"></span></div>
@@ -1003,6 +1009,52 @@ async function poll(){
     } else {
       $("pnl-testnet").textContent = "";
       $("pnl").innerHTML = `<div class="empty">${esc(d.binance ? (d.binance.reason || d.binance.pnl_error || (pnl && pnl.trade_count === 0 ? "no closed trades yet" : "no data")) : "no read-only key configured")}</div>`;
+    }
+
+    // Local trade outcomes (executor-owned; independent of Binance read-only key)
+    const lp = d.local_pnl || {};
+    const ltrades = lp.trades || [];
+    if (lp.trade_count > 0){
+      const ltot = parseFloat(lp.total_realized || 0);
+      const lwr = parseFloat(lp.win_rate || 0);
+      const lrows = ltrades.map(t => {
+        const inc = parseFloat(t.realized_pnl || 0);
+        const oc = t.outcome || "";
+        const ocClass = oc === "win" ? "pos" : (oc === "loss" ? "neg" : "");
+        const et = t.exit_type || "";
+        const etPill = et === "TP" ? "live" : (et === "SL" ? "off" : "muted");
+        return `<tr>
+          <td class="num">${esc((t.closed_at||"").slice(5,19))}</td>
+          <td><b>${esc(t.symbol)}</b></td>
+          <td class="${t.side==='BUY'?'pos':'neg'}">${esc(t.side)}</td>
+          <td><span class="pill ${etPill}"><span class="dot"></span>${esc(et)}</span></td>
+          <td class="${ocClass}">${esc(oc)}</td>
+          <td class="num ${ocClass}">${inc>=0?"+":""}${inc.toFixed(4)}</td>
+        </tr>`;
+      }).join("");
+      $("local-pnl").innerHTML = `
+        <div class="kpi-row" style="margin-bottom:14px">
+          <div class="card kpi ${ltot>=0?'bull':'bear'}">
+            <div class="lbl">Local Realized</div>
+            <div class="val" style="font-size:22px;color:${ltot>=0?'var(--bull)':'var(--bear)'}">${ltot>=0?"+":""}${ltot.toFixed(4)}</div>
+            <div class="sub">USDT · executor-tracked</div>
+          </div>
+          <div class="card kpi ${lwr>=50?'bull':(lwr>0?'amber':'')}">
+            <div class="lbl">Local Win Rate</div>
+            <div class="val" style="font-size:22px">${lwr.toFixed(1)}%</div>
+            <div class="sub">${esc(lp.wins)}W / ${esc(lp.losses)}L</div>
+          </div>
+          <div class="card kpi amber">
+            <div class="lbl">Closed (local)</div>
+            <div class="val" style="font-size:22px">${esc(lp.trade_count)}</div>
+            <div class="sub">executor DB</div>
+          </div>
+        </div>
+        ${lrows ? `<table class="tbl">
+          <thead><tr><th class="num">closed</th><th>symbol</th><th>side</th><th>exit</th><th>outcome</th><th class="num">realized</th></tr></thead>
+          <tbody>${lrows}</tbody></table>` : `<div class="empty">no closed trades recorded</div>`}`;
+    } else {
+      $("local-pnl").innerHTML = `<div class="empty">${esc(lp.error || "no locally-tracked exits yet — waiting for the executor to detect closes")}</div>`;
     }
 
     // history

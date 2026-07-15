@@ -135,6 +135,173 @@ def rollover_daily(state: Dict[str, Any], now_ts: float) -> Dict[str, Any]:
     return state
 
 
+def _scan_pause_path(config: Dict[str, Any]) -> Path:
+    rel = config.get("executor", {}).get("scan_pause_file", "runtime/SCAN_PAUSED")
+    return Path(rel) if os.path.isabs(rel) else (REPO_ROOT / rel)
+
+
+def sync_scan_pause(
+    config: Dict[str, Any],
+    state: Dict[str, Any],
+    guard: "RiskGuard",
+    logger: logging.Logger,
+    now_ts: float | None = None,
+) -> None:
+    """Create the scan-pause flag file when the daily trade limit is reached, so
+    the scanner (vibe-trading) skips scanning and saves LLM quota. Removes it
+    once under the limit. Idempotent; logs only on state transitions. Safe to
+    call on every loop iteration — this prevents a deadlock where a paused
+    scanner never produces a new signal to wake the executor for rollover."""
+    if now_ts is None:
+        now_ts = time.time()
+    today = datetime.fromtimestamp(now_ts, tz=timezone.utc).strftime("%Y-%m-%d")
+    trades_today = int(state.get("trades_today", 0)) if state.get("trades_date") == today else 0
+    max_trades = int(getattr(guard, "max_daily_trades", 0))
+
+    path = _scan_pause_path(config)
+    at_limit = max_trades > 0 and trades_today >= max_trades
+    try:
+        if at_limit:
+            if not path.exists():
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(
+                    f"scan paused: daily limit reached {trades_today}/{max_trades} "
+                    f"{datetime.now(timezone.utc).isoformat()}\n"
+                )
+                logger.info(
+                    "scan paused: daily limit reached %d/%d trades", trades_today, max_trades
+                )
+        else:
+            if path.exists():
+                path.unlink()
+                logger.info("scan resumed: under daily limit (%d/%d)", trades_today, max_trades)
+    except OSError as e:
+        logger.warning("scan_pause flag sync failed: %s", e)
+
+
+# =====================================================================
+# Exit reconciliation — detect closed positions, record outcome locally.
+# READ-ONLY: queries positions / order status / income history. Never orders.
+# =====================================================================
+def _to_ms(iso_str: Any) -> int | None:
+    """ISO 8601 string -> epoch milliseconds (for Binance startTime params)."""
+    if not iso_str:
+        return None
+    try:
+        return int(datetime.fromisoformat(str(iso_str).replace("Z", "+00:00")).timestamp() * 1000)
+    except (ValueError, TypeError):
+        return None
+
+
+def _resolve_exit(client, logger: logging.Logger, symbol: str, sl_id: Any, tp_id: Any):
+    """Return (exit_type, exit_price). exit_type in {TP, SL, MANUAL, UNKNOWN}.
+    Determines which conditional order filled by checking recent order status."""
+    try:
+        recent = client.futures_get_all_orders(symbol=symbol, limit=20)
+    except Exception as e:
+        logger.warning("reconcile: get_all_orders %s failed: %s", symbol, e)
+        return "UNKNOWN", None
+    by_id = {str(o.get("orderId")): o for o in (recent or [])}
+    sl = by_id.get(str(sl_id)) if sl_id else None
+    tp = by_id.get(str(tp_id)) if tp_id else None
+    if tp and tp.get("status") == "FILLED":
+        try:
+            return "TP", float(tp.get("avgPrice") or 0) or None
+        except (TypeError, ValueError):
+            return "TP", None
+    if sl and sl.get("status") == "FILLED":
+        try:
+            return "SL", float(sl.get("avgPrice") or 0) or None
+        except (TypeError, ValueError):
+            return "SL", None
+    # Neither conditional filled -> closed another way (manual / liquidation).
+    return "MANUAL", None
+
+
+def _resolve_pnl(client, logger: logging.Logger, symbol: str, executed_at: Any) -> float | None:
+    """Realized PnL (USDT) for this position from REALIZED_PNL income records
+    after entry time. v1 limit: if the same symbol was re-entered before this
+    close, this may aggregate multiple closes (documented limitation)."""
+    start_ms = _to_ms(executed_at)
+    if start_ms is None:
+        return None
+    try:
+        inc = client.futures_income_history(
+            symbol=symbol, incomeType="REALIZED_PNL", startTime=start_ms, limit=10
+        )
+    except Exception as e:
+        logger.warning("reconcile: income %s failed: %s", symbol, e)
+        return None
+    vals = [
+        float(r.get("income", 0) or 0)
+        for r in (inc or [])
+        if int(r.get("time", 0) or 0) >= start_ms
+    ]
+    if not vals:
+        return 0.0
+    return round(sum(vals), 6)
+
+
+def reconcile_exits(client, logger: logging.Logger, config: Dict[str, Any]) -> None:
+    """Poll open orders; for any whose position is gone, resolve the exit
+    (which conditional filled + realized PnL + outcome) and mark it closed
+    in the local DB. Called every loop iteration; network-safe (per-order
+    try/except so one failure doesn't abort the pass)."""
+    import store
+
+    try:
+        open_orders = store.open_orders(config)
+    except Exception as e:
+        logger.warning("reconcile: open_orders read failed: %s", e)
+        return
+    if not open_orders:
+        return
+
+    try:
+        positions = client.futures_position_information()
+    except Exception as e:
+        logger.warning("reconcile: position fetch failed: %s", e)
+        return
+
+    open_syms = {
+        p.get("symbol")
+        for p in (positions or [])
+        if abs(float(p.get("positionAmt", 0) or 0)) > 0
+    }
+
+    for o in open_orders:
+        sym = o.get("symbol")
+        if sym in open_syms:
+            continue  # position still open
+        try:
+            exit_type, exit_price = _resolve_exit(
+                client, logger, sym, o.get("sl_order_id"), o.get("tp_order_id")
+            )
+            realized = _resolve_pnl(client, logger, sym, o.get("executed_at"))
+        except Exception as e:
+            logger.warning("reconcile: resolve failed %s: %s", sym, e)
+            continue
+        pnl = realized if realized is not None else 0.0
+        outcome = "win" if pnl > 0 else ("loss" if pnl < 0 else "breakeven")
+        closed_at = datetime.now(timezone.utc).isoformat()
+        try:
+            store.mark_closed(
+                config,
+                o["id"],
+                exit_type=exit_type,
+                realized_pnl=realized,
+                outcome=outcome,
+                closed_at=closed_at,
+                exit_price=exit_price,
+            )
+            logger.info(
+                "CLOSED run_id=%s symbol=%s exit=%s outcome=%s pnl=%s",
+                o.get("run_id") or o.get("id"), sym, exit_type, outcome, realized,
+            )
+        except Exception as e:
+            logger.error("reconcile: mark_closed failed %s: %s", sym, e)
+
+
 # =====================================================================
 # Binance client
 # =====================================================================
@@ -418,6 +585,10 @@ def main() -> int:
     while True:
         try:
             now_ts = time.time()
+            # Load + roll over state every iteration so the scan-pause flag is
+            # synced even when no new signal arrives (prevents rollover deadlock).
+            state = rollover_daily(load_state(config), now_ts)
+            placed_any = False
             signals = read_signals(config)
             if signals is None:
                 logger.debug("no signal file")
@@ -426,18 +597,20 @@ def main() -> int:
                 if batch != last_batch:
                     last_batch = batch
                     logger.info("new signal batch: %d signal(s)", len(signals))
-                    state = load_state(config)
-                    placed_any = False
                     for signal in signals[:max_signals_per_run]:
                         outcome = process_signal(
                             client, logger, config, guard, signal, state, now_ts=now_ts
                         )
                         if outcome.get("placed"):
                             placed_any = True
-                    save_state(config, state)
-                    if args.once:
-                        logger.info("--once mode: exiting after batch")
-                        return 0 if placed_any else 0
+            # Sync scan-pause flag after any potential trades, then persist.
+            sync_scan_pause(config, state, guard, logger, now_ts=now_ts)
+            save_state(config, state)
+            # Detect closed positions and record outcomes locally (read-only).
+            reconcile_exits(client, logger, config)
+            if args.once:
+                logger.info("--once mode: exiting after batch")
+                return 0 if placed_any else 0
         except KeyboardInterrupt:
             logger.info("interrupted, exiting")
             return 0

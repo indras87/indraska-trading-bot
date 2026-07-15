@@ -269,6 +269,18 @@ def scan_signals(
 ) -> list:
     """Scan all USDT-perp, rank, ask GLM (or rule fallback), return signals.
     Also writes a scan report to signals/last_scan.json for the dashboard."""
+    # Skip scanning entirely when the executor has flagged the daily trade
+    # limit reached. Saves LLM quota — signals would only be blocked by
+    # risk_guard anyway. Flag is removed by the executor on daily rollover.
+    pause_flag = REPO_ROOT / "runtime" / "SCAN_PAUSED"
+    if pause_flag.exists():
+        print(
+            "[scan] skipped: daily trade limit reached (SCAN_PAUSED present) — "
+            "not calling LLM",
+            file=sys.stderr,
+        )
+        return []
+
     import scanner
 
     universe = scanner.get_usdt_perp_symbols()

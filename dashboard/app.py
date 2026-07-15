@@ -313,8 +313,22 @@ def status() -> JSONResponse:
             },
             "executor": _executor_status(poll),
             "binance": _binance_readonly_account(),
+            "local_pnl": _local_trade_outcomes(),
         }
     )
+
+
+def _local_trade_outcomes() -> Dict[str, Any]:
+    """Executor-owned outcome stats + recent closed trades (from bot.db, NOT
+    from Binance income history). Read-only; empty if the DB is absent."""
+    try:
+        return {
+            **store.local_trade_stats(),
+            "trades": store.closed_trades(limit=20),
+        }
+    except Exception as e:
+        return {"trade_count": 0, "wins": 0, "losses": 0, "win_rate": 0.0,
+                "total_realized": 0.0, "trades": [], "error": str(e)}
 
 
 @app.get("/api/chart")

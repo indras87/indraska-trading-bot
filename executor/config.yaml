@@ -18,11 +18,15 @@ executor:
   # Max signals acted on per scan batch. Each = one position. Caps concurrent
   # exposure (position_size_usdt x N). Raise/lower to taste.
   max_signals_per_run: 10
+  # Flag file created by the executor when the daily trade limit is reached.
+  # The scanner (vibe-trading) checks it and skips scanning while present,
+  # saving LLM quota. Auto-removed on daily rollover.
+  scan_pause_file: runtime/SCAN_PAUSED
 
 risk_guard:
   min_confidence: 0.60
   max_signal_age_seconds: 300
-  max_daily_trades: 10
+  max_daily_trades: 50            # raised from 10 per explicit user request (2026-07-15)
   kill_switch_file: runtime/KILL_SWITCH   # cwd-relative; shared volume in docker
   allowed_actions:
     - BUY
