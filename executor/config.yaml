@@ -13,7 +13,7 @@ binance:
 executor:
   poll_interval_seconds: 30
   signal_file: signals/latest_signal.json
-  state_file: runtime/state.json
+  db_file: runtime/bot.db          # SQLite: state + orders history (replaces state.json + orders_history.jsonl)
   log_file: runtime/executor.log
   # Max signals acted on per scan batch. Each = one position. Caps concurrent
   # exposure (position_size_usdt x N). Raise/lower to taste.

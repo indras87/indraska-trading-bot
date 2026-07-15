@@ -185,3 +185,22 @@ GLM mengembalikan alasan (mis. "Capitulation setup: RSI 16 oversold + volume bes
 **Catatan risiko multi-coin:** scan bisa membuka banyak posisi sekaligus → exposure = `position_size_usdt × N`. Cap dengan `max_signals_per_run` + `risk_guard.max_daily_trades` (default 10). Token equity/volatilitas kecil (mis. LABUSDT) sering muncul di top karena ranking beri bobot |change%| — sesuaikan `min_quote_volume` kalau mau hanya coin besar.
 
 **Test:** `pytest vibe-trading/test_scanner.py executor/test_risk_guard.py` → **27 passed** (ranking, RSI 0/50/100, allow-all, dedup, dll).
+
+---
+
+## Update 2026-07-15 — Migrasi persistence ke SQLite
+
+**Perubahan:** `runtime/state.json` + `runtime/orders_history.jsonl` diganti satu DB `runtime/bot.db` (sqlite3 stdlib, WAL mode). Order path, risk_guard, kill switch, leverage TIDAK diubah.
+
+**File:** `executor/store.py` (baru, layer SQLite), `executor/migrate_to_sqlite.py` (one-shot import), `executor/test_store.py` (9 unit test), `executor/executor.py` (load/save/append delegasi ke store), `dashboard/app.py` (baca DB read-only), `executor/config.yaml` (`executor.db_file`).
+
+| Verifikasi | Hasil |
+|---|---|
+| `store` unit test | `pytest executor/test_store.py` → **9 passed** (init, state round-trip, idempotent, append/recent/latest, WAL, missing-DB guard) |
+| risk_guard regression | `pytest executor/test_risk_guard.py executor/test_store.py` → **29 passed** (risk_guard tetap terima dict state, gak berubah) |
+| Migrasi data lama | 4 order + 4 processed_run_ids terimport; `executor/state.json` & `orders_history.jsonl` → `.bak` (gak dihapus) |
+| Dashboard baca DB | boot uvicorn, `GET /api/status` → `last_order=ALCHUSDT`, `orders_history=4`, `state.trades_today=4`, `processed_run_ids=4` (semua dari SQLite) |
+| Executor testnet e2e | `BINANCE_TESTNET=true python executor/executor.py --once` → boot OK, `testnet=True`, load_state dari DB, risk_guard blokir stale signal (expected), exit 0 |
+| Write-path delegation | `executor.append_order_history(cfg, fake)` → row masuk DB (verifikasi tanpa order nyata) |
+
+**Testnet:** tetap `BINANCE_TESTNET=true`. `.env` TIDAK di-print/ditulis; hanya verifikasi ada. `runtime/bot.db*` di-gitignore (data runtime, bukan secret).

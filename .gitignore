@@ -12,6 +12,8 @@ runtime/*
 executor/state.json
 executor/state.tmp
 executor/orders_history.jsonl
+executor/state.json.bak
+executor/orders_history.jsonl.bak
 executor/executor.log
 KILL_SWITCH
 **/KILL_SWITCH

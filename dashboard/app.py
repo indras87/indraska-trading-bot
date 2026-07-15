@@ -16,9 +16,10 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Request
@@ -27,13 +28,17 @@ from fastapi.responses import FileResponse, JSONResponse
 REPO_ROOT = Path(__file__).resolve().parent.parent
 EXECUTOR_DIR = REPO_ROOT / "executor"
 
+# Import the executor's read-only persistence layer (store.py). This module
+# contains NO order/trade functions — only SQLite reads/writes of state +
+# order history. Safe to import from the read-only dashboard.
+sys.path.insert(0, str(EXECUTOR_DIR))
+import store  # noqa: E402
+
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
 SIGNAL_FILE = REPO_ROOT / "signals" / "latest_signal.json"
 SCAN_FILE = REPO_ROOT / "signals" / "last_scan.json"
-STATE_FILE = REPO_ROOT / "runtime" / "state.json"
 EXECUTOR_LOG = REPO_ROOT / "runtime" / "executor.log"
-ORDERS_HISTORY = REPO_ROOT / "runtime" / "orders_history.jsonl"
 KLINES_URL = os.environ.get(
     "SCANNER_BASE_URL", "https://fapi.binance.com"
 ) + "/fapi/v1/klines"
@@ -71,20 +76,32 @@ def _token_ok(token: Optional[str]) -> bool:
     return bool(token) and token == DASHBOARD_TOKEN
 
 
-def _binance_readonly_positions() -> Dict[str, Any]:
-    """Optional: fetch live positions if a SEPARATE read-only key is set.
-    Falls back gracefully (empty) if not configured. NEVER trades."""
+def _readonly_client():
+    """Build a Binance client from the SEPARATE dashboard read-only key.
+    Returns (client, testnet) or (None, None) if not configured. NEVER trades."""
     key = os.environ.get("DASHBOARD_BINANCE_API_KEY")
     secret = os.environ.get("DASHBOARD_BINANCE_API_SECRET")
     testnet = os.environ.get("BINANCE_TESTNET", "true").lower() in ("1", "true", "yes", "on")
     if not key or not secret:
-        return {"available": False, "reason": "no read-only dashboard key configured"}
-    try:
-        from binance.client import Client  # read-only usage only
+        return None, None
+    from binance.client import Client  # read-only usage only
 
-        client = Client(key, secret, testnet=testnet)
+    return Client(key, secret, testnet=testnet), testnet
+
+
+def _binance_readonly_account(trade_limit: int = 100) -> Dict[str, Any]:
+    """Optional: fetch live positions + realized-PnL trade history if a SEPARATE
+    read-only key is set. Falls back gracefully (empty) if not configured.
+    NEVER trades. Uses futures_income_history(REALIZED_PNL) — each record is a
+    closing fill, so sum(income)=total realized PnL, count>0=winning trades."""
+    client, testnet = _readonly_client()
+    if client is None:
+        return {"available": False, "reason": "no read-only dashboard key configured"}
+
+    result: Dict[str, Any] = {"available": True, "testnet": testnet}
+    try:
         acct = client.futures_account()
-        positions = [
+        result["positions"] = [
             {
                 "symbol": p["symbol"],
                 "positionAmt": p["positionAmt"],
@@ -95,9 +112,63 @@ def _binance_readonly_positions() -> Dict[str, Any]:
             for p in acct.get("positions", [])
             if float(p.get("positionAmt", 0)) != 0.0
         ]
-        return {"available": True, "testnet": testnet, "positions": positions}
     except Exception as e:
-        return {"available": False, "reason": f"read-only fetch failed: {e}"}
+        result["positions"] = []
+        result["positions_error"] = f"positions fetch failed: {e}"
+
+    # Realized PnL trade history (income history, REALIZED_PNL only).
+    try:
+        income = client.futures_income_history(
+            incomeType="REALIZED_PNL", limit=int(trade_limit)
+        )
+        trades = []
+        total_pnl = 0.0
+        wins = 0
+        losses = 0
+        gross_profit = 0.0
+        gross_loss = 0.0
+        for r in income or []:
+            amt = float(r.get("income", 0) or 0)
+            total_pnl += amt
+            if amt > 0:
+                wins += 1
+                gross_profit += amt
+            elif amt < 0:
+                losses += 1
+                gross_loss += abs(amt)
+            trades.append(
+                {
+                    "symbol": r.get("symbol"),
+                    "income": round(amt, 6),
+                    "tradeId": r.get("tradeId"),
+                    "incomeType": r.get("incomeType"),
+                    "time": datetime.fromtimestamp(
+                        r.get("time", 0) / 1000, tz=timezone.utc
+                    ).isoformat()
+                    if r.get("time")
+                    else None,
+                }
+            )
+        # Newest first.
+        trades.reverse()
+        decided = wins + losses
+        result["pnl"] = {
+            "total_realized": round(total_pnl, 6),
+            "trade_count": decided,
+            "wins": wins,
+            "losses": losses,
+            "win_rate": round(wins / decided * 100, 2) if decided else 0.0,
+            "gross_profit": round(gross_profit, 6),
+            "gross_loss": round(gross_loss, 6),
+            "profit_factor": round(gross_profit / gross_loss, 4)
+            if gross_loss > 0
+            else None,
+            "trades": trades,
+        }
+    except Exception as e:
+        result["pnl"] = {"trade_count": 0, "trades": []}
+        result["pnl_error"] = f"income history fetch failed: {e}"
+    return result
 
 
 def _executor_status(poll_interval: int = 30) -> Dict[str, Any]:
@@ -124,27 +195,36 @@ def _executor_status(poll_interval: int = 30) -> Dict[str, Any]:
         return {"available": False, "alive": False, "reason": str(e)}
 
 
-def _orders_history(limit: int = 20) -> list:
-    """Read last `limit` orders from orders_history.jsonl (newest first)."""
-    if not ORDERS_HISTORY.exists():
+def _orders_history(limit: int = 20) -> List[Dict[str, Any]]:
+    """Read last `limit` orders from the SQLite DB (newest first).
+    Read-only; returns [] if the DB does not exist yet."""
+    if not store.db_path().exists():
         return []
-    out = []
     try:
-        with open(ORDERS_HISTORY, "r") as f:
-            lines = f.readlines()
-    except OSError:
-        return []
-    for line in reversed(lines):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            out.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
-        if len(out) >= limit:
-            break
-    return out
+        return store.recent_orders(limit=limit)
+    except Exception as e:
+        return [{"error": f"orders read failed: {e}"}]
+
+
+def _executor_state() -> Dict[str, Any]:
+    """Read executor state (meta + processed_run_ids) from the DB.
+    Read-only; returns zeros if the DB does not exist yet (never creates it)."""
+    if not store.db_path().exists():
+        return {"processed_run_ids": [], "trades_today": 0, "trades_date": ""}
+    try:
+        return store.load_state()
+    except Exception as e:
+        return {"processed_run_ids": [], "trades_today": 0, "trades_date": "", "error": str(e)}
+
+
+def _latest_order() -> Optional[Dict[str, Any]]:
+    """Most recent order from the DB, or None (single source of truth)."""
+    if not store.db_path().exists():
+        return None
+    try:
+        return store.latest_order()
+    except Exception:
+        return None
 
 
 def _fetch_klines(symbol: str, interval: str = "1h", limit: int = 100) -> Dict[str, Any]:
@@ -172,22 +252,22 @@ def _fetch_klines(symbol: str, interval: str = "1h", limit: int = 100) -> Dict[s
 @app.get("/api/status")
 def status() -> JSONResponse:
     signal = _read_json(SIGNAL_FILE)
-    state = _read_json(STATE_FILE)
-    poll = int((state or {}).get("poll_interval_seconds", 0) or 30)
+    poll = 30  # executor heartbeat threshold (matches config poll_interval_seconds)
+    state = _executor_state()
     return JSONResponse(
         {
             "time": datetime.now(timezone.utc).isoformat(),
             "kill_switch_active": _kill_switch_active(),
             "signal": signal,
-            "last_order": (state or {}).get("last_order"),
+            "last_order": _latest_order(),
             "orders_history": _orders_history(20),
             "state": {
-                "processed_run_ids": (state or {}).get("processed_run_ids", []),
-                "trades_today": (state or {}).get("trades_today", 0),
-                "trades_date": (state or {}).get("trades_date", ""),
+                "processed_run_ids": state.get("processed_run_ids", []),
+                "trades_today": state.get("trades_today", 0),
+                "trades_date": state.get("trades_date", ""),
             },
             "executor": _executor_status(poll),
-            "binance": _binance_readonly_positions(),
+            "binance": _binance_readonly_account(),
         }
     )
 

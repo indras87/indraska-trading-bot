@@ -107,35 +107,23 @@ def read_signal(config: Dict[str, Any]) -> Optional[list]:
 
 
 def load_state(config: Dict[str, Any]) -> Dict[str, Any]:
-    state_path = config.get("executor", {}).get("state_file", "executor/state.json")
-    p = (REPO_ROOT / state_path) if not os.path.isabs(state_path) else Path(state_path)
-    if not p.exists():
-        return {"processed_run_ids": [], "trades_today": 0, "trades_date": ""}
-    try:
-        with open(p, "r") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return {"processed_run_ids": [], "trades_today": 0, "trades_date": ""}
+    # Persistence is now SQLite (runtime/bot.db). Delegated to store.py.
+    # risk_guard reads the dict shape returned here — kept identical.
+    import store
+    return store.load_state(config)
 
 
 def save_state(config: Dict[str, Any], state: Dict[str, Any]) -> None:
-    state_path = config.get("executor", {}).get("state_file", "executor/state.json")
-    p = (REPO_ROOT / state_path) if not os.path.isabs(state_path) else Path(state_path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".tmp")
-    with open(tmp, "w") as f:
-        json.dump(state, f, indent=2)
-    os.replace(tmp, p)
+    import store
+    store.save_state(config, state)
 
 
 def append_order_history(config: Dict[str, Any], result: Dict[str, Any]) -> None:
-    """Append a filled-order record (one JSON per line) for dashboard history."""
-    hist_path = REPO_ROOT / "runtime" / "orders_history.jsonl"
+    """Insert a filled-order record into the DB for dashboard history."""
     try:
-        hist_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(hist_path, "a") as f:
-            f.write(json.dumps(result) + "\n")
-    except OSError as e:
+        import store
+        store.append_order(config, result)
+    except Exception as e:
         logging.getLogger("executor").warning("could not write orders_history: %s", e)
 
 
@@ -385,9 +373,10 @@ def process_signal(
         return {"run_id": run_id, "accepted": True, "placed": False, "error": str(e)}
 
     # Update state only after a successful placement.
+    # NOTE: last_order is no longer stored in state — the dashboard derives it
+    # from the latest row of the orders table (single source of truth).
     state.setdefault("processed_run_ids", []).append(run_id)
     state["trades_today"] = int(state.get("trades_today", 0)) + 1
-    state["last_order"] = result
     append_order_history(config, result)
     logger.info("DONE run_id=%s entry=%s SL=%s TP=%s",
                 run_id, result["entry_order_id"], result["sl_order_id"], result["tp_order_id"])
