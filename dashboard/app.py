@@ -2,10 +2,16 @@
 dashboard/app.py — READ-ONLY web UI for the trading bot.
 
 Hard rules (CLAUDE.md):
-  - Binds 127.0.0.1 ONLY. Never 0.0.0.0. Access via SSH tunnel.
+  - Binds 127.0.0.1 ONLY. Never 0.0.0.0. Public access is via a reverse proxy
+    (Caddy/Nginx) that terminates HTTPS on the same host and proxies to
+    127.0.0.1:8080 — the dashboard process itself never binds a public iface.
+  - When exposed publicly, HTTP Basic Auth MUST be enabled
+    (DASHBOARD_AUTH_USER / DASHBOARD_AUTH_PASS). Without it, auth is disabled
+    and the app is safe ONLY behind an SSH tunnel.
   - Binance key MUST be read-only (futures read, no trade), separate from executor.
   - Only endpoint that writes anything: kill switch toggle (create/delete KILL_SWITCH).
-  - Kill switch toggle requires DASHBOARD_TOKEN header, checked every request.
+  - Kill switch toggle requires DASHBOARD_TOKEN header, checked every request
+    (second factor on top of Basic Auth).
   - Never imports/calls executor order functions (place_futures_order etc).
   - Never writes config.yaml or risk_guard config.
 
@@ -14,8 +20,10 @@ Run: uvicorn dashboard.app:app --host 127.0.0.1 --port 8080
 
 from __future__ import annotations
 
+import base64
 import json
 import os
+import secrets
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -49,7 +57,44 @@ KILL_SWITCH_PATH = Path(
 
 DASHBOARD_TOKEN = os.environ.get("DASHBOARD_TOKEN", "")
 
+# HTTP Basic Auth — gates ALL access when deployed behind a public reverse proxy.
+# Backward compatible: if unset, auth is disabled (local/tunnel use only).
+DASHBOARD_AUTH_USER = os.environ.get("DASHBOARD_AUTH_USER", "")
+DASHBOARD_AUTH_PASS = os.environ.get("DASHBOARD_AUTH_PASS", "")
+BASIC_AUTH_ENABLED = bool(DASHBOARD_AUTH_USER and DASHBOARD_AUTH_PASS)
+
 app = FastAPI(title="Trading Bot Dashboard", docs_url=None, redoc_url=None)
+
+
+def _basic_auth_ok(authorization: Optional[str]) -> bool:
+    """Constant-time check of HTTP Basic credentials. Returns False if auth
+    is disabled OR credentials are missing/wrong."""
+    if not BASIC_AUTH_ENABLED:
+        return True
+    if not authorization or not authorization.startswith("Basic "):
+        return False
+    try:
+        decoded = base64.b64decode(authorization[6:]).decode("utf-8")
+    except Exception:
+        return False
+    user, sep, pw = decoded.partition(":")
+    if not sep:
+        return False
+    return secrets.compare_digest(user, DASHBOARD_AUTH_USER) and secrets.compare_digest(
+        pw, DASHBOARD_AUTH_PASS
+    )
+
+
+@app.middleware("http")
+async def _require_basic_auth(request: Request, call_next):
+    # /healthz stays open for reverse-proxy health checks (returns no secrets).
+    if request.url.path == "/healthz" or _basic_auth_ok(request.headers.get("authorization")):
+        return await call_next(request)
+    return JSONResponse(
+        {"detail": "authentication required"},
+        status_code=401,
+        headers={"WWW-Authenticate": 'Basic realm="tbot-dashboard"'},
+    )
 
 
 # =====================================================================
@@ -340,5 +385,10 @@ def healthz() -> JSONResponse:
 if __name__ == "__main__":
     import uvicorn
 
-    # Bind 127.0.0.1 ONLY — enforced here and in systemd.
+    if BASIC_AUTH_ENABLED:
+        print("[dashboard] HTTP Basic Auth ENABLED — safe for public reverse proxy", file=sys.stderr)
+    else:
+        print("[dashboard] WARNING: Basic Auth DISABLED — use SSH tunnel only, do NOT expose", file=sys.stderr)
+    # Bind 127.0.0.1 ONLY — enforced here and in systemd. Public access via
+    # reverse proxy (see dashboard/Caddyfile.example).
     uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("PORT", "8080")))

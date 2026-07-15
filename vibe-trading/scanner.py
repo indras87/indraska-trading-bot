@@ -157,11 +157,16 @@ def scan(
     min_quote_volume: float = 10_000_000,
     allowed_symbols: List[str] | None = None,
     rsi_for_top: int = 20,
-) -> List[Dict[str, Any]]:
+    return_ranked: bool = False,
+) -> List[Dict[str, Any]] | tuple:
     """Run a full scan. Returns top_n candidates enriched with RSI.
 
     `rsi_for_top` controls how many of the ranked top we compute RSI for
     (klines are per-symbol; keep this bounded). top_n <= rsi_for_top.
+
+    If `return_ranked=True`, returns a (top_candidates, all_ranked) tuple where
+    all_ranked is every symbol passing the liquidity filter (for dashboard
+    background display), each as {symbol, change_pct, score} without RSI.
     """
     tickers = fetch_24h_tickers()
     # Restrict to the real USDT-perp universe (ticker/24hr returns ALL pairs).
@@ -172,4 +177,11 @@ def scan(
              len(ranked), len(shortlist))
     for row in shortlist[:top_n]:
         row["rsi"] = compute_rsi(row["symbol"], rsi_interval, rsi_period)
+    if return_ranked:
+        # Lightweight projection of the full ranked universe (no RSI/price bloat).
+        all_ranked = [
+            {"symbol": r["symbol"], "change_pct": r["change_pct"], "score": r["score"]}
+            for r in ranked
+        ]
+        return shortlist[:top_n], all_ranked
     return shortlist[:top_n]

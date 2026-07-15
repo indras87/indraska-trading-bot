@@ -1,0 +1,47 @@
+# =====================================================================
+# Caddyfile.example — public HTTPS reverse proxy for the dashboard.
+#
+# The dashboard itself binds 127.0.0.1:8080 (hard rule, never changed).
+# Caddy terminates TLS (auto Let's Encrypt) on the public interface and
+# proxies to localhost. HTTP Basic Auth is enforced IN the FastAPI app
+# (DASHBOARD_AUTH_USER / DASHBOARD_AUTH_PASS in dashboard/.env), so it
+# works regardless of proxy. Caddy only does TLS + forwarding here.
+#
+# Deploy:
+#   1. Point dashboard.yourdomain.com DNS A/AAAA record at this VPS.
+#   2. sudo apt install caddy  (or use the official Docker image)
+#   3. Copy to /etc/caddy/Caddyfile, edit the domain + upstream path
+#   4. sudo systemctl reload caddy   (Caddy fetches certs automatically)
+#
+# After this, access at https://dashboard.yourdomain.com — browser prompts
+# for the Basic Auth user/pass. The kill-switch toggle still needs the
+# separate DASHBOARD_TOKEN (second factor) entered in the UI.
+# =====================================================================
+
+dashboard.yourdomain.com {
+	encode zstd gzip
+
+	# Trust real client IP forwarded by Caddy (informational; app is read-only).
+	header {
+		# Force browsers to always require auth (don't cache credentials long).
+		-Server
+	}
+
+	# Proxy everything to the localhost-bound dashboard.
+	reverse_proxy 127.0.0.1:8080 {
+		# Healthy upstream = 200 from /healthz (exempt from Basic Auth).
+		health_uri /healthz
+		health_interval 30s
+		health_timeout 5s
+	}
+
+	# Optional second layer of Basic Auth at the proxy. Redundant with the
+	# app-layer auth but cheap defense-in-depth. Generate a hash with:
+	#   caddy hash-password
+	# Uncomment and set DASHBOARD_AUTH_USER/PASS to the same creds as the app
+	# if you want auth enforced at BOTH layers.
+	#
+	# basic_auth {
+	#   tbot <hash-from-caddy-hash-password>
+	# }
+}

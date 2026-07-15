@@ -272,9 +272,12 @@ def scan_signals(
     import scanner
 
     universe = scanner.get_usdt_perp_symbols()
-    candidates = scanner.scan(top_n=top_n, min_quote_volume=min_quote_volume)
+    candidates, all_ranked = scanner.scan(
+        top_n=top_n, min_quote_volume=min_quote_volume, return_ranked=True
+    )
     print(
-        f"[scan] universe={len(universe)} candidates_ranked(top {top_n})={len(candidates)}",
+        f"[scan] universe={len(universe)} candidates_ranked(top {top_n})={len(candidates)} "
+        f"all_ranked={len(all_ranked)}",
         file=sys.stderr,
     )
 
@@ -310,6 +313,7 @@ def scan_signals(
         "top_n": top_n,
         "max_picks": max_picks,
         "top_candidates": candidates,
+        "all_ranked": all_ranked,
         "glm_decisions": raw_decisions if provider_used == "glm" else [],
         "signals_emitted": signals,
     }

@@ -68,6 +68,27 @@
   @keyframes drift1 { 0%,100%{transform:translate(0,0)} 50%{transform:translate(40px,30px)} }
   @keyframes drift2 { 0%,100%{transform:translate(0,0)} 50%{transform:translate(-30px,-40px)} }
 
+  /* ===================== Neuron bubble section. ===================== */
+  /* Dedicated section. Each bubble = one scanned coin (size by score, label =
+     symbol). Links near neighbors. Energizes on fresh scan, bursts on trade. */
+  .neuron-wrap {
+    position: relative; width: 100%; height: 360px;
+    background: radial-gradient(120% 120% at 50% 0%, rgba(245,158,11,0.05), transparent 60%);
+    border-radius: var(--radius-sm); border: 1px solid var(--border); overflow: hidden;
+  }
+  #neurons { display: block; width: 100%; height: 100%; }
+  .neuron-legend {
+    position: absolute; left: 12px; bottom: 10px; display: flex; gap: 12px;
+    font-size: 11px; color: var(--muted); font-family: var(--font-mono);
+    pointer-events: none;
+  }
+  .neuron-legend .sw { display: inline-flex; align-items: center; gap: 5px; }
+  .neuron-legend .sw i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .neuron-empty {
+    position: absolute; inset: 0; display: grid; place-items: center;
+    color: var(--muted); font-size: 13px; pointer-events: none;
+  }
+
   /* ===================== Top bar. Glass, sticky, < 80px. ===================== */
   .topbar {
     position: sticky; top: 0; z-index: 50;
@@ -419,6 +440,26 @@
     </div>
   </section>
 
+  <!-- ===================== NEURON BUBBLES ===================== -->
+  <div class="card reveal" style="margin-bottom:18px">
+    <div class="card-head">
+      <h2>Neuron Map</h2>
+      <span class="tag" id="neu-tag">awaiting scan</span>
+      <div class="spacer"></div>
+      <span class="tag" id="neu-count"></span>
+    </div>
+    <div class="neuron-wrap">
+      <canvas id="neurons" role="img" aria-label="Neuron bubble map of scanned coins"></canvas>
+      <div class="neuron-legend" aria-hidden="true">
+        <span class="sw"><i style="background:#2dd4bf"></i>bull</span>
+        <span class="sw"><i style="background:#f43f5e"></i>bear</span>
+        <span class="sw"><i style="background:#64748b"></i>universe</span>
+        <span class="sw"><i style="background:#f59e0b"></i>scanning</span>
+      </div>
+      <div class="neuron-empty" id="neu-empty">no scan data yet</div>
+    </div>
+  </div>
+
   <!-- ===================== CHART ===================== -->
   <div class="card reveal" style="margin-bottom:18px">
     <div class="card-head">
@@ -496,6 +537,253 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+/* =====================================================
+   Neuron bubbles. Dedicated section, one bubble per scanned coin.
+   idle  → slow drift, dim links.
+   scan  → energize (amber), faster, more links. (fresh scan result)
+   trade → traded coin's bubble bursts (grow + ripple). (new order)
+   ===================================================== */
+const Neurons = (() => {
+  const cv = $("neurons"), ctx = cv.getContext("2d");
+  const emptyEl = $("neu-empty");
+  let W = 0, H = 0, dpr = 1, nodes = [];
+  const LINK = 150;            // px distance to draw a link
+  let mode = "idle";           // idle | scan | trade
+  let modeUntil = 0;
+  let tradeColor = "45,212,191";
+  let tradeNode = null;        // node currently bursting
+  let tradeEnd = 0;
+
+  function resize(){
+    dpr = window.devicePixelRatio || 1;
+    const rect = cv.getBoundingClientRect();
+    W = Math.max(200, rect.width);
+    H = Math.max(200, rect.height);
+    cv.width = Math.round(W * dpr);
+    cv.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    layoutTargets(true);
+  }
+
+  /* Grid layout that fills the whole canvas (rows/cols from aspect ratio),
+     so nodes spread out instead of piling in the center. */
+  function layoutTargets(repositionAll){
+    const n = nodes.length;
+    if (!n) return;
+    const cols = Math.max(1, Math.round(Math.sqrt(n * (W / H))));
+    const rows = Math.ceil(n / cols);
+    const cellW = W / cols, cellH = H / rows;
+    const cx0 = W / 2, cy0 = H / 2;
+    nodes.forEach((node, i) => {
+      const r = Math.floor(i / cols), c = i % cols;
+      // center of each cell + small jitter
+      node.tx = cellW * (c + 0.5) + (Math.random() - 0.5) * cellW * 0.3;
+      node.ty = cellH * (r + 0.5) + (Math.random() - 0.5) * cellH * 0.3;
+      if (repositionAll || node.x == null){
+        node.x = cx0 + (Math.random() - 0.5) * W * 0.3;
+        node.y = cy0 + (Math.random() - 0.5) * H * 0.3;
+      }
+    });
+  }
+
+  /* Rebuild nodes from scan candidates. Preserves position of coins that persist.
+     topCands → big, colored, labeled. allCands → small, neutral, unlabeled. */
+  function setCoins(topCands, allCands){
+    const prev = new Map(nodes.map(n => [n.symbol, n]));
+    const next = [];
+    const topSyms = new Set();
+
+    const addNode = (c, tier, baseR, color) => {
+      const old = prev.get(c.symbol);
+      const node = old || { x: null, y: null, ph: Math.random() * Math.PI * 2 };
+      node.symbol = c.symbol;
+      node.tier = tier;
+      node.baseR = baseR;
+      node.chg = c.change_pct || 0;
+      node.color = color;
+      // continuous-motion velocity (persisted across scans if coin survives)
+      if (node.vx == null || Number.isNaN(node.vx)){
+        const ang = Math.random() * Math.PI * 2;
+        const sp = tier === "top" ? 0.45 : 0.8;
+        node.vx = Math.cos(ang) * sp;
+        node.vy = Math.sin(ang) * sp;
+      }
+      next.push(node);
+    };
+
+    // top candidates: big, bull/bear colored
+    topCands.forEach((c, i) => {
+      topSyms.add(c.symbol);
+      const score = typeof c.score === "number" ? c.score : (1 - i * 0.05);
+      const s = Math.max(0, Math.min(1.2, score));
+      addNode(c, "top", 16 + s * 20, c.change_pct >= 0 ? "45,212,191" : "244,63,94");
+    });
+
+    // remaining universe: small, neutral, no label. Cap for perf, sample evenly.
+    const rest = (allCands || []).filter(c => !topSyms.has(c.symbol));
+    const CAP = 140;
+    const dim = rest.length > CAP
+      ? rest.filter((_, i) => i % Math.ceil(rest.length / CAP) === 0)
+      : rest;
+    dim.forEach(c => addNode(c, "dim", 3 + Math.random() * 2.5, "100,116,139"));
+
+    nodes = next;
+    layoutTargets(false);
+    if (emptyEl) emptyEl.style.display = nodes.length ? "none" : "grid";
+  }
+
+  function setMode(m, ms){ mode = m; modeUntil = performance.now() + ms; }
+
+  function frame(now){
+    if (mode !== "idle" && now > modeUntil) mode = "idle";
+    const scanning = mode === "scan";
+    const trading = mode === "trade" && now < tradeEnd;
+    if (mode === "trade" && now >= tradeEnd) mode = "idle";
+    const tradeProg = trading ? Math.max(0, Math.min(1, 1 - (tradeEnd - now) / 1400)) : 1;
+    const t = now / 1000;
+
+    ctx.clearRect(0, 0, W, H);
+
+    // physics: continuous motion. Bounce off walls + bounce off each other.
+    const boost = scanning ? 1.9 : 1;
+    for (const n of nodes){
+      if (n.x == null){ n.x = n.tx != null ? n.tx : Math.random() * W; n.y = n.ty != null ? n.ty : Math.random() * H; }
+      // keep a minimum speed so motion never stalls
+      const sp = Math.hypot(n.vx, n.vy);
+      const minSp = n.tier === "top" ? 0.25 : 0.45;
+      const maxSp = n.tier === "top" ? 1.6 : 2.4;
+      if (!Number.isFinite(sp) || sp < minSp){
+        const ang = Math.random() * Math.PI * 2;
+        n.vx = Math.cos(ang) * minSp; n.vy = Math.sin(ang) * minSp;
+      } else if (sp > maxSp){
+        n.vx *= maxSp / sp; n.vy *= maxSp / sp;
+      }
+      n.x += n.vx * boost; n.y += n.vy * boost;
+      // bounce off canvas walls
+      const r = n.baseR;
+      if (n.x < r){ n.x = r; n.vx = Math.abs(n.vx); }
+      else if (n.x > W - r){ n.x = W - r; n.vx = -Math.abs(n.vx); }
+      if (n.y < r){ n.y = r; n.vy = Math.abs(n.vy); }
+      else if (n.y > H - r){ n.y = H - r; n.vy = -Math.abs(n.vy); }
+    }
+    // pairwise collisions: separate overlap + elastic bounce along normal
+    for (let i = 0; i < nodes.length; i++){
+      const a = nodes[i];
+      for (let j = i + 1; j < nodes.length; j++){
+        const b = nodes[j];
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const dist = Math.hypot(dx, dy) || 0.01;
+        const minD = a.baseR + b.baseR + (a.tier === "dim" && b.tier === "dim" ? 2 : 4);
+        if (dist < minD){
+          const ux = dx / dist, uy = dy / dist;
+          const overlap = minD - dist;
+          a.x -= ux * overlap * 0.5; a.y -= uy * overlap * 0.5;
+          b.x += ux * overlap * 0.5; b.y += uy * overlap * 0.5;
+          // reflect velocities if approaching (equal-mass elastic)
+          const va = a.vx * ux + a.vy * uy;
+          const vb = b.vx * ux + b.vy * uy;
+          if (vb < va){
+            const diff = va - vb;
+            a.vx -= diff * ux; a.vy -= diff * uy;
+            b.vx += diff * ux; b.vy += diff * uy;
+          }
+        }
+      }
+    }
+
+    // links: only between top nodes (dim swarm stays unlinked for clarity + perf)
+    const tops = nodes.filter(n => n.tier === "top");
+    for (let i = 0; i < tops.length; i++){
+      const a = tops[i];
+      for (let j = i + 1; j < tops.length; j++){
+        const b = tops[j];
+        const dx = a.x - b.x, dy = a.y - b.y;
+        const d2 = dx*dx + dy*dy;
+        if (d2 < LINK * LINK){
+          const d = Math.sqrt(d2);
+          let alpha = (1 - d / LINK) * (scanning ? 0.34 : 0.16);
+          if (trading && (a === tradeNode || b === tradeNode)) alpha = Math.max(alpha, 0.5 * (1 - tradeProg));
+          ctx.strokeStyle = `rgba(${scanning ? "245,158,11" : "148,163,184"},${alpha})`;
+          ctx.lineWidth = scanning ? 1 : 0.7;
+          ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+        }
+      }
+    }
+
+    // nodes — dim first (background), top on top
+    const ordered = nodes.slice().sort((p, q) => (p.tier === "top" ? 1 : 0) - (q.tier === "top" ? 1 : 0));
+    for (const n of ordered){
+      const isTop = n.tier === "top";
+      const isBurst = trading && n === tradeNode;
+      const pulse = 0.5 + 0.5 * Math.sin(t * (scanning ? 3 : 1.4) + n.ph);
+      const grow = isBurst ? (0.4 + (1 - tradeProg) * 1.1) : (isTop && scanning ? 0.18 : 0);
+      const rad = n.baseR * (1 + grow * (0.6 + 0.4 * pulse));
+      const col = (isTop && scanning) ? "245,158,11" : n.color;
+      let baseA = isBurst ? 0.7 + (1 - tradeProg) * 0.3
+               : isTop ? (scanning ? 0.5 + pulse * 0.3 : 0.42 + pulse * 0.18)
+               : (0.16 + pulse * 0.08);
+
+      // glow halo
+      const g = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, rad * (isTop ? 2.4 : 1.8));
+      g.addColorStop(0, `rgba(${col},${baseA})`);
+      g.addColorStop(1, `rgba(${col},0)`);
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(n.x, n.y, rad * (isTop ? 2.4 : 1.8), 0, Math.PI * 2); ctx.fill();
+      // core disc
+      ctx.fillStyle = `rgba(${col},${Math.min(0.9, baseA + (isTop ? 0.25 : 0.1))})`;
+      ctx.beginPath(); ctx.arc(n.x, n.y, rad, 0, Math.PI * 2); ctx.fill();
+
+      // symbol label — only top candidates
+      if (isTop){
+        const fs = Math.max(9, Math.min(15, rad * 0.62));
+        ctx.fillStyle = "rgba(11,17,32,0.92)";
+        ctx.font = `700 ${fs}px ui-monospace, monospace`;
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText(n.symbol.replace("USDT", ""), n.x, n.y + 0.5);
+      }
+
+      // trade burst ripple on the traded coin
+      if (isBurst){
+        for (let ring = 0; ring < 2; ring++){
+          const p = Math.max(0, tradeProg - ring * 0.18);
+          const rr = (1 - p) * (40 + ring * 18) + rad;
+          ctx.strokeStyle = `rgba(${tradeColor},${p * 0.5})`;
+          ctx.lineWidth = 1.2;
+          ctx.beginPath(); ctx.arc(n.x, n.y, rr, 0, Math.PI * 2); ctx.stroke();
+        }
+      }
+    }
+
+    requestAnimationFrame(frame);
+  }
+
+  if (!reduce){
+    window.addEventListener("resize", resize);
+    if (window.ResizeObserver){
+      new ResizeObserver(resize).observe(cv.parentElement);
+    }
+    resize();
+    requestAnimationFrame(frame);
+  } else if (emptyEl){
+    emptyEl.textContent = "animations disabled (reduced motion)";
+  }
+
+  return {
+    /* feed scan candidates in: top=[{symbol,change_pct,score}], all=full universe */
+    setCoins(topCands, allCands){ if (!reduce) setCoins(topCands, allCands); },
+    /* fresh scan result landed → energize */
+    scan(){ if (!reduce) setMode("scan", 2600); },
+    /* order executed. side + symbol of the traded coin */
+    trade(side, symbol){
+      if (reduce) return;
+      tradeColor = side === "SELL" ? "244,63,94" : "45,212,191";
+      tradeNode = nodes.find(n => n.symbol === symbol) || null;
+      tradeEnd = performance.now() + 1400;
+      setMode("trade", 1400);
+    }
+  };
+})();
+
 /* Clock. Motivated: UTC reference for trading hours. */
 function tickClock(){
   const d = new Date(), p = n => String(n).padStart(2,"0");
@@ -543,6 +831,8 @@ reveal();
    Poll /api/status
    ===================================================== */
 let prevSigRun = null;
+let prevOrderId = null;
+let prevScanAt = "";
 
 async function poll(){
   try{
@@ -596,6 +886,11 @@ async function poll(){
     // last order
     if (d.last_order){
       const o = d.last_order;
+      const oid = o.entry_order_id || o.executed_at || `${o.symbol}-${o.side}`;
+      if (oid && oid !== prevOrderId){
+        if (prevOrderId !== null) Neurons.trade(o.side, o.symbol);   // burst the traded coin
+        prevOrderId = oid;
+      }
       $("order").innerHTML = `
         <div class="kv"><span class="k">symbol</span><b>${esc(o.symbol)}</b></div>
         <div class="kv"><span class="k">side</span><span class="v ${o.side==='BUY'?'pos':'neg'}">${esc(o.side)}</span></div>
@@ -965,6 +1260,20 @@ async function loadScan(){
       $("scan-when").textContent = "";
       $("scan").innerHTML = `<div class="empty">${esc(d?.reason || "no scan run yet")}</div>`; return;
     }
+    // energize neurons only when a fresh scan result lands (not on every poll)
+    const at = d.scanned_at || "";
+    const top = (d.top_candidates || []).slice(0, 30);
+    const all = d.all_ranked || [];
+    const neuTag = $("neu-tag"), neuCount = $("neu-count");
+    if (at && at !== prevScanAt){
+      Neurons.setCoins(top, all);
+      Neurons.scan();
+      prevScanAt = at;
+      if (neuTag) neuTag.textContent = "scan energized";
+    } else if (neuTag && top.length){
+      neuTag.textContent = "mapped";
+    }
+    if (neuCount) neuCount.textContent = top.length ? `${top.length}/${all.length} coins` : "";
     $("scan-when").textContent = `scanned ${esc((d.scanned_at||"").slice(0,19))}`;
     const tc = (d.top_candidates || []).map((c, i) => {
       const chg = c.change_pct || 0;
