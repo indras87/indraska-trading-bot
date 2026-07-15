@@ -531,6 +531,11 @@ def place_futures_order(
         "status": "filled",
         "executed_at": datetime.now(timezone.utc).isoformat(),
         "run_id": signal.get("run_id"),
+        # Signal metadata, stored in payload JSON for later confidence-vs-winrate
+        # analysis. None-safe; absent on malformed signals. Not used by the order
+        # path itself — appended after SL/TP are already placed.
+        "confidence": signal.get("confidence"),
+        "reason": signal.get("reason"),
     }
 
 
